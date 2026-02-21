@@ -28,12 +28,89 @@ st.set_page_config(
 
 # --- Mobile-First CSS Removed ---
 
+ROUTINES_FILE = 'rutinas.json'
+EXERCISES_FILE = 'ejercicios_master.csv'
+
+DEFAULT_EXERCISES = {
+    "Pecho": [
+        "Press Banca Plano", "Press Banca Inclinado", "Press Banca Declinado",
+        "Aperturas con Mancuernas", "Cruce en Poleas", "Fondos de Pecho",
+        "Pullover", "Press en Máquina", "Flexiones (Push-ups)"
+    ],
+    "Espalda": [
+        "Dominadas (Pull Ups)", "Dominadas Supinas (Chin Ups)", "Remo con Barra",
+        "Remo con Mancuerna", "Jalón al Pecho", "Remo en Polea Baja",
+        "Remo en T", "Pullover en Polea", "Peso Muerto (Espalda)", "Encogimientos (Trapecio)"
+    ],
+    "Piernas": [
+        "Sentadilla (Squat)", "Prensa Piernas", "Zancadas (Lunges)",
+        "Sentadilla Búlgara", "Peso Muerto Rumano", "Curl Femoral Tumbado",
+        "Curl Femoral Sentado", "Extensión de Cuádriceps", "Elevación de Talones de Pie",
+        "Elevación de Talones Sentado", "Sentadilla Hack", "Hip Thrust"
+    ],
+    "Hombros": [
+        "Press Militar (Overhead)", "Press Arnold", "Elevaciones Laterales",
+        "Elevaciones Frontales", "Pájaros (Deltoides Posterior)", "Face Pull",
+        "Press Tras Nuca", "Elevaciones Laterales en Polea"
+    ],
+    "Brazos": [
+        "Curl Bíceps con Barra", "Curl Bíceps con Mancuernas", "Curl Martillo",
+        "Curl en Banco Scott", "Curl Concentrado", "Extensión Tríceps en Polea",
+        "Press Francés", "Fondos de Tríceps", "Patada de Tríceps",
+        "Extensión Tríceps Tras Nuca"
+    ],
+    "Core / Otros": [
+        "Crunch Abdominal", "Plancha (Plank)", "Elevación de Piernas Colgado",
+        "Rueda Abdominal", "Russian Twists", "Woodchoppers", "Paseo del Granjero"
+    ]
+}
+
+def load_routines():
+    if os.path.exists(ROUTINES_FILE):
+        with open(ROUTINES_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {}
+
+def load_exercises():
+    if os.path.exists(EXERCISES_FILE):
+        df = pd.read_csv(EXERCISES_FILE)
+        catalog = {}
+        if 'Grupo Muscular' in df.columns and 'Nombre del Ejercicio' in df.columns:
+            for grupo, group_df in df.groupby('Grupo Muscular'):
+                catalog[grupo] = sorted(group_df['Nombre del Ejercicio'].tolist())
+        return catalog
+    else:
+        records = []
+        for grupo, ejercicios in DEFAULT_EXERCISES.items():
+            for ej in ejercicios:
+                records.append({"Nombre del Ejercicio": ej, "Grupo Muscular": grupo})
+        df = pd.DataFrame(records)
+        df.to_csv(EXERCISES_FILE, index=False)
+        return {k: sorted(v) for k, v in DEFAULT_EXERCISES.items()}
+
+def save_new_exercise(nombre, grupo):
+    df_new = pd.DataFrame([{"Nombre del Ejercicio": nombre, "Grupo Muscular": grupo}])
+    if os.path.exists(EXERCISES_FILE):
+        df_exist = pd.read_csv(EXERCISES_FILE)
+        df = pd.concat([df_exist, df_new], ignore_index=True)
+    else:
+        df = df_new
+    df = df.drop_duplicates(subset=["Nombre del Ejercicio"])
+    df.to_csv(EXERCISES_FILE, index=False)
+
+EXERCISE_CATALOG = load_exercises()
+
 # --- Data Persistence ---
 def load_data():
     if os.path.exists(CSV_FILE):
-        return pd.read_csv(CSV_FILE)
+        df = pd.read_csv(CSV_FILE)
+        if 'Rutina_Nombre' not in df.columns:
+            df['Rutina_Nombre'] = 'Legacy'
+        if 'ID_Sesion' not in df.columns:
+            df['ID_Sesion'] = 'N/A'
+        return df
     else:
-        return pd.DataFrame(columns=["Fecha", "Ejercicio", "Peso", "Reps", "Notas"])
+        return pd.DataFrame(columns=["Fecha", "Rutina_Nombre", "ID_Sesion", "Ejercicio", "Peso", "Reps", "Notas"])
 
 def load_body_comp_data():
     if os.path.exists(BODY_COMP_CSV_FILE):
@@ -49,16 +126,36 @@ def delete_workout(index):
         return True
     return False
 
-def save_workout(ejercicio, peso, reps, notas):
+def save_workout(ejercicio, peso, reps, notas, rutina_nombre="Libre", id_sesion="N/A"):
     df = load_data()
     new_entry = {
         "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "Rutina_Nombre": rutina_nombre,
+        "ID_Sesion": id_sesion,
         "Ejercicio": ejercicio,
         "Peso": peso,
         "Reps": reps,
         "Notas": notas
     }
     df = pd.concat([df, pd.DataFrame([new_entry])], ignore_index=True)
+    df.to_csv(CSV_FILE, index=False)
+    return True
+
+def save_routine(rutina_nombre, id_sesion, df_sets):
+    df = load_data()
+    records = []
+    fecha = datetime.now().strftime("%Y-%m-%d %H:%M")
+    for s in df_sets:
+        records.append({
+            "Fecha": fecha,
+            "Rutina_Nombre": rutina_nombre,
+            "ID_Sesion": id_sesion,
+            "Ejercicio": s['Ejercicio'],
+            "Peso": s['Peso'],
+            "Reps": s['Reps'],
+            "Notas": s['Notas']
+        })
+    df = pd.concat([df, pd.DataFrame(records)], ignore_index=True)
     df.to_csv(CSV_FILE, index=False)
     return True
 
@@ -108,71 +205,101 @@ if 'current_muscle_group' not in st.session_state:
 
 st.info(f"⚖️ **Peso:** {USER_PROFILE['current_weight']} kg | 🎯 **Meta:** {USER_PROFILE['goal_body_fat']}% Grasa | ⚡ **Sesión:** {st.session_state.current_muscle_group}")
 
-tab1, tab2, tab3, tab4 = st.tabs(["Entrenamiento", "Composición Corporal", "Progreso Visual", "Nutrición"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["Entrenamiento", "Composición Corporal", "Progreso Visual", "Nutrición", "⚙️ Configuración"])
 
 with tab1:
     # 2. Workout Entry Form
-    st.subheader("Registrar Set")
+    st.subheader("Entrenamiento Activo")
 
-    # Exercise Selector
-    EXERCISE_CATALOG = {
-        "Pecho": [
-            "Press Banca Plano", "Press Banca Inclinado", "Press Banca Declinado",
-            "Aperturas con Mancuernas", "Cruce en Poleas", "Fondos de Pecho",
-            "Pullover", "Press en Máquina", "Flexiones (Push-ups)"
-        ],
-        "Espalda": [
-            "Dominadas (Pull Ups)", "Dominadas Supinas (Chin Ups)", "Remo con Barra",
-            "Remo con Mancuerna", "Jalón al Pecho", "Remo en Polea Baja",
-            "Remo en T", "Pullover en Polea", "Peso Muerto (Espalda)", "Encogimientos (Trapecio)"
-        ],
-        "Piernas": [
-            "Sentadilla (Squat)", "Prensa Piernas", "Zancadas (Lunges)",
-            "Sentadilla Búlgara", "Peso Muerto Rumano", "Curl Femoral Tumbado",
-            "Curl Femoral Sentado", "Extensión de Cuádriceps", "Elevación de Talones de Pie",
-            "Elevación de Talones Sentado", "Sentadilla Hack", "Hip Thrust"
-        ],
-        "Hombros": [
-            "Press Militar (Overhead)", "Press Arnold", "Elevaciones Laterales",
-            "Elevaciones Frontales", "Pájaros (Deltoides Posterior)", "Face Pull",
-            "Press Tras Nuca", "Elevaciones Laterales en Polea"
-        ],
-        "Brazos": [
-            "Curl Bíceps con Barra", "Curl Bíceps con Mancuernas", "Curl Martillo",
-            "Curl en Banco Scott", "Curl Concentrado", "Extensión Tríceps en Polea",
-            "Press Francés", "Fondos de Tríceps", "Patada de Tríceps",
-            "Extensión Tríceps Tras Nuca"
-        ],
-        "Core / Otros": [
-            "Crunch Abdominal", "Plancha (Plank)", "Elevación de Piernas Colgado",
-            "Rueda Abdominal", "Russian Twists", "Woodchoppers", "Paseo del Granjero"
-        ]
-    }
+    # Exercise Catalog for "Libre" mode uses the global EXERCISE_CATALOG
 
-    grupo_muscular = st.selectbox("Grupo Muscular", list(EXERCISE_CATALOG.keys()), key="current_muscle_group")
+    routines = load_routines()
+    rutina_opciones = [r for r in routines.keys() if r != "Libre (Histórico)"] + ["Libre"]
+    
+    rutina_seleccionada = st.selectbox("Rutina Activa", rutina_opciones, key="current_muscle_group")
 
     # Initialize timer state
     if "start_timer" not in st.session_state:
         st.session_state.start_timer = False
 
-    with st.form("workout_form", clear_on_submit=True):
-        ejercicio = st.selectbox("Ejercicio", EXERCISE_CATALOG[grupo_muscular])
-        
-        c1, c2 = st.columns(2)
-        with c1:
-            peso = st.number_input("Peso (kg)", min_value=0.0, step=2.5, format="%.1f")
-        with c2:
-            reps = st.number_input("Reps", min_value=0, step=1, value=10)
+    if rutina_seleccionada == "Libre":
+        grupo_muscular_libre = st.selectbox("Grupo Muscular", list(EXERCISE_CATALOG.keys()))
+        with st.form("workout_form", clear_on_submit=True):
+            ejercicio = st.selectbox("Ejercicio", EXERCISE_CATALOG[grupo_muscular_libre])
             
-        notas = st.text_area("Notas (RPE, sensaciones...)", height=80)
-        
-        # Big Submit Button
-        submitted = st.form_submit_button("LOG SET 📝")
-        
-        if submitted:
-            if save_workout(ejercicio, peso, reps, notas):
-                st.success(f"✅ Guardado: {ejercicio} - {peso}kg x {reps}")
-                st.session_state.start_timer = True # Trigger timer on save
+            c1, c2 = st.columns(2)
+            with c1:
+                peso = st.number_input("Peso (kg)", min_value=0.0, step=2.5, format="%.1f")
+            with c2:
+                reps = st.number_input("Reps", min_value=0, step=1, value=10)
+                
+            notas = st.text_area("Notas (RPE, sensaciones...)", height=80)
+            
+            submitted = st.form_submit_button("LOG SET 📝", use_container_width=True)
+            
+            if submitted:
+                if save_workout(ejercicio, peso, reps, notas):
+                    st.success(f"✅ Guardado: {ejercicio} - {peso}kg x {reps}")
+                    st.session_state.start_timer = True # Trigger timer on save
+    else:
+        routine_exercises = routines[rutina_seleccionada]
+        with st.form(f"routine_form_{rutina_seleccionada}", clear_on_submit=False):
+            routine_results = {}
+            for i, ex_data in enumerate(routine_exercises):
+                ex_name = ex_data["ejercicio"]
+                sets_count = ex_data["sets"]
+                reps_meta = ex_data.get("reps_meta", [])
+                
+                st.markdown(f"**{i+1}. {ex_name}**")
+                
+                initial_data = []
+                for s in range(sets_count):
+                    meta_str = f"{reps_meta[s]} reps" if s < len(reps_meta) else "-"
+                    initial_data.append({
+                        "Set": s + 1,
+                        "Meta": meta_str,
+                        "Peso(kg)": 0.0,
+                        "Reps": 0,
+                        "Notas": ""
+                    })
+                
+                df_initial = pd.DataFrame(initial_data)
+                
+                edited_df = st.data_editor(
+                    df_initial,
+                    column_config={
+                        "Set": st.column_config.NumberColumn(disabled=True),
+                        "Meta": st.column_config.TextColumn(disabled=True),
+                        "Peso(kg)": st.column_config.NumberColumn(min_value=0.0, step=2.5, format="%.1f"),
+                        "Reps": st.column_config.NumberColumn(min_value=0, step=1)
+                    },
+                    hide_index=True,
+                    key=f"editor_{rutina_seleccionada}_{i}",
+                    use_container_width=True
+                )
+                routine_results[ex_name] = edited_df
+                st.write("") # spacing
+                
+            submitted_routine = st.form_submit_button("FINALIZAR Y GUARDAR RUTINA 💾", use_container_width=True)
+            if submitted_routine:
+                id_sesion = datetime.now().strftime("%Y%m%d%H%M%S")
+                all_sets = []
+                for ex_name, df_res in routine_results.items():
+                    valid_sets = df_res[(df_res['Peso(kg)'] > 0) | (df_res['Reps'] > 0)]
+                    for _, row in valid_sets.iterrows():
+                        all_sets.append({
+                            'Ejercicio': ex_name,
+                            'Peso': row['Peso(kg)'],
+                            'Reps': row['Reps'],
+                            'Notas': row['Notas'] if pd.notna(row['Notas']) else ''
+                        })
+                
+                if all_sets:
+                    save_routine(rutina_seleccionada, id_sesion, all_sets)
+                    st.success(f"✅ Rutina '{rutina_seleccionada}' guardada con éxito.")
+                    st.session_state.start_timer = True
+                else:
+                    st.warning("⚠️ No se registraron sets (todos tenían 0 peso y 0 reps).")
                 
     # --- Rest Timer Section ---
     st.divider()
@@ -285,8 +412,11 @@ with tab1:
                         reps_for_calc = min(reps_val, 36)
                         rm_est = peso_val / (1.0278 - (0.0278 * reps_for_calc))
                         
+                    rotulo_rutina = row.get('Rutina_Nombre', 'Legacy')
+                    if pd.isna(rotulo_rutina): rotulo_rutina = "Libre"
+                        
                     with st.container(border=True):
-                        st.markdown(f"**{row['Ejercicio']}**")
+                        st.markdown(f"**{row['Ejercicio']}** _({rotulo_rutina})_")
                         st.markdown(f"⚖️ {row['Peso']} kg x {row['Reps']} reps | 🎯 1RM Est: {rm_est:.1f} kg")
                         st.caption(f"{fecha_str} | {row['Notas']}")
                 with col_btn:
@@ -449,6 +579,50 @@ with tab3:
             st.info("No hay datos de entrenamiento suficientes para mostrar el volumen semanal.")
     else:
         st.info("Registra algunos sets de entrenamiento para ver tu volumen semanal.")
+
+    st.divider()
+    
+    # --- Gráfico 3: Volumen Histórico por Rutina ---
+    st.subheader("Evolución de Volumen por Rutina")
+    if not df_train.empty and 'Rutina_Nombre' in df_train.columns:
+        rutinas_disponibles = [r for r in df_train['Rutina_Nombre'].unique() if r not in ["Legacy", "Libre"] and pd.notna(r)]
+        
+        if rutinas_disponibles:
+            rutina_filtro = st.selectbox("Seleccionar Rutina", rutinas_disponibles)
+            df_rutina = df_train[df_train['Rutina_Nombre'] == rutina_filtro].copy()
+            
+            if not df_rutina.empty:
+                df_rutina['Fecha'] = pd.to_datetime(df_rutina['Fecha'])
+                df_rutina['Día'] = df_rutina['Fecha'].dt.date
+                df_rutina['Volumen'] = df_rutina['Peso'] * df_rutina['Reps']
+                
+                volumen_por_sesion = df_rutina.groupby('Día')['Volumen'].sum().reset_index()
+                
+                fig_rutina = px.line(
+                    volumen_por_sesion, 
+                    x='Día', 
+                    y='Volumen',
+                    title=f"Volumen Total Levantado: {rutina_filtro}",
+                    markers=True
+                )
+                
+                fig_rutina.update_traces(line=dict(color='#FF00FF', width=3), marker=dict(size=8, color='#FF00FF', line=dict(width=1, color='#0E1117')))
+                fig_rutina.update_layout(
+                    margin=dict(l=0, r=0, t=40, b=0),
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    xaxis=dict(title="", gridcolor='#1A1D24', tickfont=dict(color='#E0E0CE')),
+                    yaxis=dict(title="Volumen (kg)", gridcolor='#1A1D24', tickfont=dict(color='#E0E0CE')),
+                    title_font=dict(color="#E0E0CE")
+                )
+                
+                st.plotly_chart(fig_rutina, use_container_width=True)
+            else:
+                st.info("No hay datos suficientes para esta rutina.")
+        else:
+            st.info("Completa una rutina guardada para ver su evolución.")
+    else:
+        st.info("No hay datos de rutinas registrados aún.")
 
 with tab4:
     st.header("Calculadora Nutricional")
@@ -633,3 +807,47 @@ with tab4:
 st.write("")
 st.write("") 
 st.write("") 
+
+with tab5:
+    st.header("Gestión de Diccionario de Ejercicios")
+    st.write("Añade nuevos ejercicios o gestiona los que ya no utilices. Los cambios se reflejarán instantáneamente en la pestaña de Entrenamiento.")
+    
+    with st.form("add_exercise_form", clear_on_submit=True):
+        col_e1, col_e2 = st.columns(2)
+        with col_e1:
+            nuevo_ejercicio = st.text_input("Nombre del Ejercicio", placeholder="Ej: Hip Thrust")
+        with col_e2:
+            grupos_existentes = sorted(list(EXERCISE_CATALOG.keys()))
+            grupo_sel = st.selectbox("Grupo Muscular", grupos_existentes + ["Otro..."])
+            nuevo_grupo = st.text_input("Si elegiste 'Otro...', especifica:")
+            
+        submit_ejercicio = st.form_submit_button("Añadir Ejercicio ➕", use_container_width=True)
+        
+        if submit_ejercicio and nuevo_ejercicio:
+            target_group = nuevo_grupo if grupo_sel == "Otro..." and nuevo_grupo else grupo_sel
+            if target_group == "Otro..." and not nuevo_grupo:
+                st.error("Por favor, especifica el nuevo grupo muscular.")
+            else:
+                save_new_exercise(nuevo_ejercicio, target_group)
+                st.success(f"Ejercicio '{nuevo_ejercicio}' añadido al grupo '{target_group}'.")
+                st.rerun()
+                
+    st.divider()
+    st.subheader("Catálogo Actual")
+    
+    if os.path.exists(EXERCISES_FILE):
+        df_ej = pd.read_csv(EXERCISES_FILE)
+        df_ej = df_ej.sort_values(by=["Grupo Muscular", "Nombre del Ejercicio"])
+        
+        st.write("💡 Selecciona una fila para eliminarla (selecciona a la izquierda y presiona tecla Delete/Retroceso) o modifica el texto. Presiona 'Guardar Cambios' para aplicar.")
+        edited_ej = st.data_editor(
+            df_ej,
+            num_rows="dynamic",
+            use_container_width=True,
+            key="exercises_editor_table"
+        )
+        
+        if st.button("Guardar Cambios 💾", type="primary"):
+            edited_ej.to_csv(EXERCISES_FILE, index=False)
+            st.success("Diccionario actualizado exitosamente.")
+            st.rerun()
