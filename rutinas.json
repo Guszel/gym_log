@@ -1,0 +1,67 @@
+{
+    "Día de Pierna": [
+        {
+            "ejercicio": "Prensa Piernas",
+            "sets": 3,
+            "reps_meta": [
+                10,
+                10,
+                10
+            ]
+        },
+        {
+            "ejercicio": "Curl Femoral Tumbado",
+            "sets": 2,
+            "reps_meta": [
+                12,
+                11
+            ]
+        },
+        {
+            "ejercicio": "Sentadilla Búlgara",
+            "sets": 2,
+            "reps_meta": [
+                10,
+                10
+            ]
+        },
+        {
+            "ejercicio": "Extensión de Cuádriceps",
+            "sets": 3,
+            "reps_meta": [
+                12,
+                12,
+                12
+            ]
+        },
+        {
+            "ejercicio": "Adductores",
+            "sets": 3,
+            "reps_meta": [
+                15,
+                15,
+                15
+            ]
+        },
+        {
+            "ejercicio": "Abductores",
+            "sets": 3,
+            "reps_meta": [
+                15,
+                15,
+                15
+            ]
+        },
+        {
+            "ejercicio": "Elevación de Talones Sentado",
+            "sets": 4,
+            "reps_meta": [
+                15,
+                15,
+                15,
+                15
+            ]
+        }
+    ],
+    "Libre (Histórico)": []
+}
