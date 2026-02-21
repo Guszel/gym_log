@@ -26,106 +26,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- Mobile-First CSS ---
-st.markdown("""
-    <style>
-    /* Dark Industrial Lab Theme */
-    @import url('https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700&display=swap');
-    
-    /* Global Background */
-    .stApp {
-        background-color: #0E1117;
-    }
-    
-    /* Primary buttons (Chemistry Neon Green) */
-    .stButton > button[kind="primary"] {
-        background-color: transparent !important;
-        color: #39FF14 !important;
-        border: 2px solid #39FF14 !important;
-        box-shadow: 0 0 10px rgba(57, 255, 20, 0.2);
-        transition: all 0.3s ease;
-    }
-    .stButton > button[kind="primary"]:hover {
-        background-color: #39FF14 !important;
-        color: #0E1117 !important;
-        box-shadow: 0 0 20px rgba(57, 255, 20, 0.6);
-    }
-    
-    /* Secondary buttons */
-    .stButton > button[kind="secondary"] {
-        background-color: transparent !important;
-        color: #E0E0CE !important;
-        border: 1px solid #333 !important;
-        transition: all 0.3s ease;
-    }
-    .stButton > button[kind="secondary"]:hover {
-        border-color: #39FF14 !important;
-        color: #39FF14 !important;
-        box-shadow: 0 0 10px rgba(57, 255, 20, 0.4);
-    }
-
-    /* Input fields */
-    .stTextInput > div > div > input, 
-    .stNumberInput > div > div > input,
-    .stSelectbox > div > div > div,
-    .stTextArea > div > div > textarea {
-        background-color: #1A1D24 !important;
-        color: #E0E0CE !important;
-        border: 1px solid #333 !important;
-    }
-    .stTextInput > div > div > input:focus, 
-    .stNumberInput > div > div > input:focus,
-    .stSelectbox > div > div > div:focus,
-    .stTextArea > div > div > textarea:focus {
-        border-color: #39FF14 !important;
-        box-shadow: 0 0 5px rgba(57, 255, 20, 0.5) !important;
-    }
-    
-    /* Monospace class for stats */
-    .mono-text {
-        font-family: 'Roboto Mono', monospace !important;
-    }
-    
-    /* Industrial Cards */
-    .industrial-card {
-        background-color: #13161C;
-        padding: 15px;
-        border-radius: 8px;
-        margin-bottom: 12px;
-        border: 1px solid rgba(57, 255, 20, 0.3);
-        box-shadow: 0 4px 6px rgba(0,0,0,0.5);
-        transition: all 0.3s ease;
-    }
-    .industrial-card:hover {
-        border-color: rgba(57, 255, 20, 0.8);
-        box-shadow: 0 0 15px rgba(57, 255, 20, 0.2);
-    }
-
-    /* Increase button size for touch targets */
-    .stButton > button {
-        width: 100%;
-        min-height: 3.5rem;
-        font-size: 1.2rem;
-        font-weight: bold;
-        border-radius: 8px;
-        margin-top: 10px;
-        margin-bottom: 10px;
-    }
-    
-    /* Text styles mapping */
-    h1, h2, h3, h4, h5, h6, p, span, div, label {
-        color: #E0E0CE;
-    }
-    
-    /* Remove padding to maximize screen space */
-    .block-container {
-        padding-top: 1rem;
-        padding-bottom: 5rem;
-        padding-left: 1rem;
-        padding-right: 1rem;
-    }
-    </style>
-""", unsafe_allow_html=True)
+# --- Mobile-First CSS Removed ---
 
 # --- Data Persistence ---
 def load_data():
@@ -202,68 +103,16 @@ with st.sidebar:
             )
 
 # 1. Status Bar Header
-st.markdown("""
-<style>
-/* Streamlit Hack: Make the first columns block (stHorizontalBlock) fixed like a native sticky header */
-div[data-testid="stHorizontalBlock"]:first-of-type {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    z-index: 999999;
-    background: rgba(14, 17, 23, 0.85) !important;
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    padding: 10px 1rem;
-    border-radius: 0 0 12px 12px;
-    border-bottom: 1px solid rgba(57, 255, 20, 0.4);
-    box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-    /* Attempt to center the content like the main app container */
-    margin: 0 auto;
-    max-width: 100%;
-}
-@media (min-width: 768px) {
-    div[data-testid="stHorizontalBlock"]:first-of-type {
-        max-width: 730px;
-        left: 50%;
-        transform: translateX(-50%);
-    }
-}
-.status-text {
-    font-size: 0.8rem;
-    color: #E0E0CE;
-    font-family: 'Roboto Mono', monospace;
-    text-align: center;
-    line-height: 1.2;
-}
-.status-val {
-    color: #39FF14;
-    font-weight: bold;
-    font-size: 0.95rem;
-}
-/* Ensure the block container has enough padding to scroll under the sticky header */
-.block-container {
-    padding-top: 1rem !important; 
-}
-</style>
-""", unsafe_allow_html=True)
-
 if 'current_muscle_group' not in st.session_state:
     st.session_state.current_muscle_group = 'Pecho'
 
-c1, c2, c3 = st.columns(3)
-with c1:
-    st.markdown(f"<div class='status-text'>⚖️ Peso<br><span class='status-val'>{USER_PROFILE['current_weight']} kg</span></div>", unsafe_allow_html=True)
-with c2:
-    st.markdown(f"<div class='status-text'>🎯 Meta<br><span class='status-val'>{USER_PROFILE['goal_body_fat']}% Grasa</span></div>", unsafe_allow_html=True)
-with c3:
-    st.markdown(f"<div class='status-text'>⚡ Sesión<br><span class='status-val'>{st.session_state.current_muscle_group}</span></div>", unsafe_allow_html=True)
+st.info(f"⚖️ **Peso:** {USER_PROFILE['current_weight']} kg | 🎯 **Meta:** {USER_PROFILE['goal_body_fat']}% Grasa | ⚡ **Sesión:** {st.session_state.current_muscle_group}")
 
 tab1, tab2, tab3, tab4 = st.tabs(["Entrenamiento", "Composición Corporal", "Progreso Visual", "Nutrición"])
 
 with tab1:
     # 2. Workout Entry Form
-    st.markdown("<h3 style='font-family: sans-serif; font-size: 1.3rem; color: #E0E0CE; margin-bottom: 0;'>Registrar Set</h3>", unsafe_allow_html=True)
+    st.subheader("Registrar Set")
 
     # Exercise Selector
     EXERCISE_CATALOG = {
@@ -333,20 +182,7 @@ with tab1:
     with col_t1:
         rest_time = st.number_input("Segundos", min_value=10, max_value=300, value=90, step=10)
     with col_t2:
-        # Extra styling to make the button giant
-        st.markdown("""
-        <style>
-        div[data-testid="stButton"] button[kind="primary"] {
-            background-color: #FF4B4B;
-            color: white;
-            height: 4rem;
-            font-size: 1.5rem;
-            border-radius: 15px;
-            width: 100%;
-            margin-top: 25px;
-        }
-        </style>
-        """, unsafe_allow_html=True)
+        # Minimalist approach: basic Streamlit button formatting used instead of CSS injection
         
         manual_start = st.button("INICIAR TEMPORIZADOR", type="primary")
         
@@ -449,16 +285,10 @@ with tab1:
                         reps_for_calc = min(reps_val, 36)
                         rm_est = peso_val / (1.0278 - (0.0278 * reps_for_calc))
                         
-                    st.markdown(f"""
-                    <div class="industrial-card">
-                        <div style="font-weight: bold; font-size: 1.1em; color: #39FF14;">{row['Ejercicio']}</div>
-                        <div style="display: flex; justify-content: space-between; margin-top: 5px;">
-                            <span class="mono-text">⚖️ {row['Peso']} kg x {row['Reps']} reps</span>
-                            <span class="mono-text" style="color: #00FFFF; font-size: 0.9em; border: 1px solid #00FFFF; padding: 2px 6px; border-radius: 4px;">🎯 1RM Est: {rm_est:.1f} kg</span>
-                        </div>
-                        <div style="font-size: 0.8em; color: #888; margin-top: 5px;">{fecha_str} | {row['Notas']}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    with st.container(border=True):
+                        st.markdown(f"**{row['Ejercicio']}**")
+                        st.markdown(f"⚖️ {row['Peso']} kg x {row['Reps']} reps | 🎯 1RM Est: {rm_est:.1f} kg")
+                        st.caption(f"{fecha_str} | {row['Notas']}")
                 with col_btn:
                     if st.button("🗑️", key=f"del_{index}"):
                         delete_workout(index)
