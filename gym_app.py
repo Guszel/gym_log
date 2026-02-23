@@ -30,6 +30,29 @@ st.set_page_config(
 
 ROUTINES_FILE = 'plantillas_rutinas.json'
 EXERCISES_FILE = 'ejercicios_master.csv'
+CONFIG_FILE = 'config.json'
+
+def load_config():
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {"unidad_preferida": "Kg"}
+
+def save_config(config_dict):
+    with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+        json.dump(config_dict, f, ensure_ascii=False, indent=4)
+
+APP_CONFIG = load_config()
+UNIDAD_GLOBAL = APP_CONFIG.get("unidad_preferida", "Kg")
+
+def convert_weight(weight, from_unit, to_unit):
+    if from_unit == to_unit:
+        return weight
+    if from_unit == "Kg" and to_unit == "Lbs":
+        return weight * 2.20462
+    if from_unit == "Lbs" and to_unit == "Kg":
+        return weight / 2.20462
+    return weight
 
 DEFAULT_EXERCISES = {
     "Pecho": [
@@ -122,9 +145,11 @@ def load_data():
             df['Rutina_Nombre'] = 'Legacy'
         if 'ID_Sesion' not in df.columns:
             df['ID_Sesion'] = 'N/A'
+        if 'Unidad' not in df.columns:
+            df['Unidad'] = 'Kg' # Legacy default
         return df
     else:
-        return pd.DataFrame(columns=["Fecha", "Rutina_Nombre", "ID_Sesion", "Ejercicio", "Peso", "Reps", "Notas"])
+        return pd.DataFrame(columns=["Fecha", "Rutina_Nombre", "ID_Sesion", "Ejercicio", "Peso", "Reps", "Unidad", "Notas"])
 
 def load_body_comp_data():
     if os.path.exists(BODY_COMP_CSV_FILE):
@@ -140,15 +165,19 @@ def delete_workout(index):
         return True
     return False
 
-def save_workout(ejercicio, peso, reps, notas, rutina_nombre="Libre", id_sesion="N/A"):
+def save_workout(ejercicio, peso, reps, notas, unidad_input, rutina_nombre="Libre", id_sesion="N/A"):
+    # Convert right away to global unit
+    peso_convertido = convert_weight(peso, unidad_input, UNIDAD_GLOBAL)
+
     df = load_data()
     new_entry = {
         "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "Rutina_Nombre": rutina_nombre,
         "ID_Sesion": id_sesion,
         "Ejercicio": ejercicio,
-        "Peso": peso,
+        "Peso": round(peso_convertido, 2),
         "Reps": reps,
+        "Unidad": UNIDAD_GLOBAL,
         "Notas": notas
     }
     df = pd.concat([df, pd.DataFrame([new_entry])], ignore_index=True)
@@ -160,13 +189,19 @@ def save_routine(rutina_nombre, id_sesion, df_sets):
     records = []
     fecha = datetime.now().strftime("%Y-%m-%d %H:%M")
     for s in df_sets:
+        # Expected df_sets dict has 'Unidad'
+        unidad_input = s.get('Unidad', UNIDAD_GLOBAL)
+        peso_orig = s['Peso']
+        peso_convertido = convert_weight(peso_orig, unidad_input, UNIDAD_GLOBAL)
+        
         records.append({
             "Fecha": fecha,
             "Rutina_Nombre": rutina_nombre,
             "ID_Sesion": id_sesion,
             "Ejercicio": s['Ejercicio'],
-            "Peso": s['Peso'],
+            "Peso": round(peso_convertido, 2),
             "Reps": s['Reps'],
+            "Unidad": UNIDAD_GLOBAL,
             "Notas": s['Notas']
         })
     df = pd.concat([df, pd.DataFrame(records)], ignore_index=True)
@@ -217,7 +252,11 @@ with st.sidebar:
 if 'current_muscle_group' not in st.session_state:
     st.session_state.current_muscle_group = 'Pecho'
 
-st.info(f"⚖️ **Peso:** {USER_PROFILE['current_weight']} kg | 🎯 **Meta:** {USER_PROFILE['goal_body_fat']}% Grasa | ⚡ **Sesión:** {st.session_state.current_muscle_group}")
+current_weight_display = USER_PROFILE['current_weight']
+if UNIDAD_GLOBAL == "Lbs":
+    current_weight_display = round(current_weight_display * 2.20462, 1)
+
+st.info(f"⚖️ **Peso:** {current_weight_display} {UNIDAD_GLOBAL} | 🎯 **Meta:** {USER_PROFILE['goal_body_fat']}% Grasa | ⚡ **Sesión:** {st.session_state.current_muscle_group}")
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Entrenamiento", "Composición Corporal", "Progreso Visual", "Nutrición", "⚙️ Configuración", "🛠️ Crear Rutina"])
 
@@ -241,9 +280,11 @@ with tab1:
         with st.form("workout_form", clear_on_submit=True):
             ejercicio = st.selectbox("Ejercicio", EXERCISE_CATALOG[grupo_muscular_libre])
             
-            c1, c2 = st.columns(2)
+            c1, c1b, c2 = st.columns([2, 1, 2])
             with c1:
-                peso = st.number_input("Peso (kg)", min_value=0.0, step=2.5, format="%.1f")
+                peso = st.number_input("Peso", min_value=0.0, step=2.5, format="%.1f")
+            with c1b:
+                unidad_libre = st.selectbox("Unidad", ["Kg", "Lbs"], index=0 if UNIDAD_GLOBAL=="Kg" else 1)
             with c2:
                 reps = st.number_input("Reps", min_value=0, step=1, value=10)
                 
@@ -252,8 +293,8 @@ with tab1:
             submitted = st.form_submit_button("LOG SET 📝", use_container_width=True)
             
             if submitted:
-                if save_workout(ejercicio, peso, reps, notas):
-                    st.success(f"✅ Guardado: {ejercicio} - {peso}kg x {reps}")
+                if save_workout(ejercicio, peso, reps, notas, unidad_libre):
+                    st.success(f"✅ Guardado: {ejercicio} - {peso}{unidad_libre} x {reps}")
                     st.session_state.start_timer = True # Trigger timer on save
     else:
         routine_exercises = routines[rutina_seleccionada]
@@ -271,7 +312,8 @@ with tab1:
                     initial_data.append({
                         "Set": s + 1,
                         "Meta": meta_str,
-                        "Peso(kg)": 0.0,
+                        "Peso": 0.0,
+                        "Unidad": UNIDAD_GLOBAL,
                         "Reps": 0,
                         "Notas": ""
                     })
@@ -283,7 +325,8 @@ with tab1:
                     column_config={
                         "Set": st.column_config.NumberColumn(disabled=True),
                         "Meta": st.column_config.TextColumn(disabled=True),
-                        "Peso(kg)": st.column_config.NumberColumn(min_value=0.0, step=2.5, format="%.1f"),
+                        "Peso": st.column_config.NumberColumn(min_value=0.0, step=2.5, format="%.1f"),
+                        "Unidad": st.column_config.SelectboxColumn(options=["Kg", "Lbs"], default=UNIDAD_GLOBAL),
                         "Reps": st.column_config.NumberColumn(min_value=0, step=1)
                     },
                     hide_index=True,
@@ -298,11 +341,12 @@ with tab1:
                 id_sesion = datetime.now().strftime("%Y%m%d%H%M%S")
                 all_sets = []
                 for ex_name, df_res in routine_results.items():
-                    valid_sets = df_res[(df_res['Peso(kg)'] > 0) | (df_res['Reps'] > 0)]
+                    valid_sets = df_res[(df_res['Peso'] > 0) | (df_res['Reps'] > 0)]
                     for _, row in valid_sets.iterrows():
                         all_sets.append({
                             'Ejercicio': ex_name,
-                            'Peso': row['Peso(kg)'],
+                            'Peso': row['Peso'],
+                            'Unidad': row.get('Unidad', UNIDAD_GLOBAL),
                             'Reps': row['Reps'],
                             'Notas': row['Notas'] if pd.notna(row['Notas']) else ''
                         })
@@ -425,12 +469,16 @@ with tab1:
                         reps_for_calc = min(reps_val, 36)
                         rm_est = peso_val / (1.0278 - (0.0278 * reps_for_calc))
                         
+                    # Get saved unit to format correctly
+                    uni_historica = row.get('Unidad', "Kg")
+                    if pd.isna(uni_historica): uni_historica = "Kg"
+                        
                     rotulo_rutina = row.get('Rutina_Nombre', 'Legacy')
                     if pd.isna(rotulo_rutina): rotulo_rutina = "Libre"
                         
                     with st.container(border=True):
                         st.markdown(f"**{row['Ejercicio']}** _({rotulo_rutina})_")
-                        st.markdown(f"⚖️ {row['Peso']} kg x {row['Reps']} reps | 🎯 1RM Est: {rm_est:.1f} kg")
+                        st.markdown(f"⚖️ {row['Peso']} {uni_historica} x {row['Reps']} reps | 🎯 1RM Est: {rm_est:.1f} {uni_historica}")
                         st.caption(f"{fecha_str} | {row['Notas']}")
                 with col_btn:
                     if st.button("🗑️", key=f"del_{index}"):
@@ -524,7 +572,7 @@ with tab3:
         fig_comp.update_layout(
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(color="#E0E0CE")),
             margin=dict(l=0, r=0, t=30, b=0),
-            yaxis=dict(title='Peso (kg)', title_font=dict(color='#00FFFF'), tickfont=dict(color='#00FFFF'), gridcolor='#1A1D24'),
+            yaxis=dict(title=f'Peso ({UNIDAD_GLOBAL})', title_font=dict(color='#00FFFF'), tickfont=dict(color='#00FFFF'), gridcolor='#1A1D24'),
             yaxis2=dict(title='% Grasa', title_font=dict(color='#39FF14'), tickfont=dict(color='#39FF14'), anchor='x', overlaying='y', side='right', gridcolor='#1A1D24'),
             xaxis=dict(gridcolor='#1A1D24', tickfont=dict(color='#E0E0CE')),
             plot_bgcolor='rgba(0,0,0,0)',
@@ -580,7 +628,7 @@ with tab3:
                 plot_bgcolor='rgba(0,0,0,0)',
                 paper_bgcolor='rgba(0,0,0,0)',
                 xaxis=dict(title="", gridcolor='#1A1D24', tickfont=dict(color='#E0E0CE')),
-                yaxis=dict(title="Volumen (kg)", gridcolor='#1A1D24', tickfont=dict(color='#E0E0CE')),
+                yaxis=dict(title=f"Volumen ({UNIDAD_GLOBAL})", gridcolor='#1A1D24', tickfont=dict(color='#E0E0CE')),
                 title_font=dict(color="#E0E0CE")
             )
             
@@ -625,7 +673,7 @@ with tab3:
                     plot_bgcolor='rgba(0,0,0,0)',
                     paper_bgcolor='rgba(0,0,0,0)',
                     xaxis=dict(title="", gridcolor='#1A1D24', tickfont=dict(color='#E0E0CE')),
-                    yaxis=dict(title="Volumen (kg)", gridcolor='#1A1D24', tickfont=dict(color='#E0E0CE')),
+                    yaxis=dict(title=f"Volumen ({UNIDAD_GLOBAL})", gridcolor='#1A1D24', tickfont=dict(color='#E0E0CE')),
                     title_font=dict(color="#E0E0CE")
                 )
                 
@@ -822,6 +870,24 @@ st.write("")
 st.write("") 
 
 with tab5:
+    st.header("⚙️ Configuraciones Generales")
+    st.subheader("Preferencias de la App")
+    
+    nueva_unidad = st.selectbox(
+        "Unidad de Peso Preferida (Global)", 
+        ["Kg", "Lbs"], 
+        index=0 if UNIDAD_GLOBAL == "Kg" else 1,
+        help="Los históricos y gráficos se mostrarán en esta unidad. Si pesas en la otra, la app hará la conversión por ti."
+    )
+    
+    if nueva_unidad != UNIDAD_GLOBAL:
+        APP_CONFIG["unidad_preferida"] = nueva_unidad
+        save_config(APP_CONFIG)
+        st.success(f"Preferencia guardada: {nueva_unidad}. Aplica en el próximo reinicio o interacción.")
+        st.rerun()
+        
+    st.divider()
+    
     st.header("Gestión de Diccionario de Ejercicios")
     st.write("Añade nuevos ejercicios o gestiona los que ya no utilices. Los cambios se reflejarán instantáneamente en la pestaña de Entrenamiento.")
     
@@ -909,3 +975,4 @@ with tab6:
                         st.rerun()
     else:
         st.info("No tienes rutinas personalizadas creadas aún.")
+
