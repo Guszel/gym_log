@@ -258,7 +258,7 @@ if UNIDAD_GLOBAL == "Lbs":
 
 st.info(f"⚖️ **Peso:** {current_weight_display} {UNIDAD_GLOBAL} | 🎯 **Meta:** {USER_PROFILE['goal_body_fat']}% Grasa | ⚡ **Sesión:** {st.session_state.current_muscle_group}")
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Entrenamiento", "Composición Corporal", "Progreso Visual", "Nutrición", "⚙️ Configuración", "🛠️ Crear Rutina"])
+tab1, tab_hist, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Entrenamiento", "🕰️ Historial", "Composición Corporal", "Progreso Visual", "Nutrición", "⚙️ Configuración", "🛠️ Crear Rutina"])
 
 with tab1:
     # 2. Workout Entry Form
@@ -327,25 +327,61 @@ with tab1:
                         st.session_state[state_key].pop()
                         st.rerun()
             
-            df_initial = pd.DataFrame(st.session_state[state_key])
+            # --- 3. Comparativa (Log semana pasada) ---
+            df_hist = load_data()
+            if not df_hist.empty:
+                df_hist['Fecha'] = pd.to_datetime(df_hist['Fecha'])
+                # Filter by exercise and sort descending
+                df_ex = df_hist[df_hist['Ejercicio'] == ex_name].sort_values(by='Fecha', ascending=False)
+                if not df_ex.empty:
+                    ultima_sesion_id = df_ex.iloc[0]['ID_Sesion']
+                    if pd.notna(ultima_sesion_id) and ultima_sesion_id != 'N/A':
+                        df_ultima_sesion = df_ex[df_ex['ID_Sesion'] == ultima_sesion_id].sort_values(by='Fecha')
+                        fecha_ultima = df_ultima_sesion.iloc[0]['Fecha'].strftime('%Y-%m-%d')
+                        
+                        with st.expander(f"Ver sesión anterior ({fecha_ultima})"):
+                            # Simple clean display of what was done
+                            for idx, row_hist in df_ultima_sesion.iterrows():
+                                u_hist = row_hist.get("Unidad", "Kg")
+                                st.text(f"Set {idx+1}: {row_hist['Peso']} {u_hist} x {row_hist['Reps']} reps")
+                    else:
+                        # Fallback for Legacy rows without ID_Sesion -> just show last 3 loose logs
+                        df_recent = df_ex.head(3)
+                        with st.expander("Historial reciente"):
+                            for _, row_hist in df_recent.iterrows():
+                                sf_f = row_hist['Fecha'].strftime('%Y-%m-%d')
+                                u_hist = row_hist.get("Unidad", "Kg")
+                                st.text(f"{sf_f}: {row_hist['Peso']} {u_hist} x {row_hist['Reps']} reps")
             
-            edited_df = st.data_editor(
-                df_initial,
-                column_config={
-                    "Set": st.column_config.NumberColumn(disabled=True),
-                    "Meta": st.column_config.TextColumn(disabled=True),
-                    "Peso": st.column_config.NumberColumn(min_value=0.0, step=2.5, format="%.1f"),
-                    "Unidad": st.column_config.SelectboxColumn(options=["Kg", "Lbs"], default=UNIDAD_GLOBAL),
-                    "Reps": st.column_config.NumberColumn(min_value=0, step=1)
-                },
-                hide_index=True,
-                key=f"editor_{rutina_seleccionada}_{i}_{len(st.session_state[state_key])}",
-                use_container_width=True
-            )
-            
-            # Save user edits back to session state to prevent dataloss on rerun
-            st.session_state[state_key] = edited_df.to_dict('records')
-            routine_results[ex_name] = edited_df
+            # --- 1. Fix Reseteo: Inputs dinámicos nativos ---
+            for s_idx, set_dict in enumerate(st.session_state[state_key]):
+                c_set, c_peso, c_unidad, c_reps = st.columns([1, 2, 2, 2])
+                with c_set:
+                    st.markdown(f"<div style='margin-top:35px;'>**S{s_idx+1}**</div>", unsafe_allow_html=True)
+                with c_peso:
+                    # Dynamically read and update the session state variable
+                    st.session_state[state_key][s_idx]["Peso"] = st.number_input(
+                        "Peso", 
+                        min_value=0.0, step=2.5, format="%.1f", 
+                        value=float(set_dict["Peso"]), 
+                        key=f"peso_{rutina_seleccionada}_{i}_{s_idx}"
+                    )
+                with c_unidad:
+                    st.session_state[state_key][s_idx]["Unidad"] = st.selectbox(
+                        "Unidad", 
+                        ["Kg", "Lbs"], 
+                        index=0 if set_dict.get("Unidad", UNIDAD_GLOBAL) == "Kg" else 1,
+                        key=f"uni_{rutina_seleccionada}_{i}_{s_idx}"
+                    )
+                with c_reps:
+                    st.session_state[state_key][s_idx]["Reps"] = st.number_input(
+                        "Reps", 
+                        min_value=0, step=1, 
+                        value=int(set_dict["Reps"]), 
+                        key=f"reps_{rutina_seleccionada}_{i}_{s_idx}"
+                    )
+                    
+            routine_results[ex_name] = st.session_state[state_key]
             
         st.write("") # spacing
         
@@ -353,25 +389,27 @@ with tab1:
         if submitted_routine:
             id_sesion = datetime.now().strftime("%Y%m%d%H%M%S")
             all_sets = []
-            for ex_name, df_res in routine_results.items():
-                valid_sets = df_res[(df_res['Peso'] > 0) | (df_res['Reps'] > 0)]
-                for _, row in valid_sets.iterrows():
-                    all_sets.append({
-                        'Ejercicio': ex_name,
-                        'Peso': row['Peso'],
-                        'Unidad': row.get('Unidad', UNIDAD_GLOBAL),
-                        'Reps': row['Reps'],
-                        'Notas': row['Notas'] if pd.notna(row['Notas']) else ''
-                    })
+            for ex_name, list_sets in routine_results.items():
+                for set_data in list_sets:
+                    peso_val = set_data["Peso"]
+                    reps_val = set_data["Reps"]
+                    if peso_val > 0 or reps_val > 0:
+                        all_sets.append({
+                            'Ejercicio': ex_name,
+                            'Peso': peso_val,
+                            'Unidad': set_data['Unidad'],
+                            'Reps': reps_val,
+                            'Notas': set_data.get('Notas', '')
+                        })
             
             if all_sets:
                 save_routine(rutina_seleccionada, id_sesion, all_sets)
                 st.toast(f"✅ Rutina '{rutina_seleccionada}' guardada con éxito.")
                 st.session_state.start_timer = True
                 
-                # Cleanup session state for next routine execution
+                # Cleanup session state for this routine
                 for key in list(st.session_state.keys()):
-                    if key.startswith(f"sets_{rutina_seleccionada}_") or key.startswith(f"editor_{rutina_seleccionada}_"):
+                    if key.startswith(f"sets_{rutina_seleccionada}_"):
                         del st.session_state[key]
                 st.rerun()
             else:
@@ -455,56 +493,70 @@ with tab1:
         # Reset state so it doesn't auto-start on next UI interaction unless clicked again
         st.session_state.start_timer = False
 
-    # 3. Recent History
-    st.divider()
-    st.subheader("Historial Reciente (Últimos 5)")
-
-    df = load_data()
-    if not df.empty:
-        # Sort by date descending
-        df['Fecha'] = pd.to_datetime(df['Fecha']) # Ensure datetime for sorting
-        df_sorted = df.sort_values(by='Fecha', ascending=False).head(5)
+with tab_hist:
+    st.header("🕰️ Modo Explorador de Sesiones")
+    
+    df_hist_full = load_data()
+    if not df_hist_full.empty:
+        df_hist_full['Fecha'] = pd.to_datetime(df_hist_full['Fecha'])
         
-        # Display as styled cards for mobile friendliness
-        for index, row in df_sorted.iterrows():
-            with st.container():
-                col_card, col_btn = st.columns([5, 1])
-                with col_card:
-                    if isinstance(row['Fecha'], str):
-                        fecha_str = row['Fecha']
-                    else:
-                        fecha_str = row['Fecha'].strftime('%d/%m %H:%M')
-                    
-                    # 1RM Calculation (Brzycki)
-                    peso_val = float(row['Peso'])
-                    reps_val = int(row['Reps'])
-                    # If reps is 0, 1RM is essentially 0 or N/A, handle gracefully:
-                    if reps_val == 0:
-                        rm_est = 0
-                    elif reps_val == 1:
-                        rm_est = peso_val
-                    else:
-                        # Cap at 36 reps to prevent division by zero or negative denominator
-                        reps_for_calc = min(reps_val, 36)
-                        rm_est = peso_val / (1.0278 - (0.0278 * reps_for_calc))
-                        
-                    # Get saved unit to format correctly
-                    uni_historica = row.get('Unidad', "Kg")
-                    if pd.isna(uni_historica): uni_historica = "Kg"
-                        
-                    rotulo_rutina = row.get('Rutina_Nombre', 'Legacy')
-                    if pd.isna(rotulo_rutina): rotulo_rutina = "Libre"
-                        
-                    with st.container(border=True):
-                        st.markdown(f"**{row['Ejercicio']}** _({rotulo_rutina})_")
-                        st.markdown(f"⚖️ {row['Peso']} {uni_historica} x {row['Reps']} reps | 🎯 1RM Est: {rm_est:.1f} {uni_historica}")
-                        st.caption(f"{fecha_str} | {row['Notas']}")
-                with col_btn:
-                    if st.button("🗑️", key=f"del_{index}"):
-                        delete_workout(index)
-                        st.rerun()
+        # Identify unique sessions (except Legacy/N/A loose logs)
+        sesiones_agrupadas = df_hist_full[df_hist_full['ID_Sesion'] != 'N/A'].groupby('ID_Sesion')
+        
+        sesiones_lista = []
+        for id_sesion, group in sesiones_agrupadas:
+            fecha_sesion = group['Fecha'].iloc[0].strftime('%Y-%m-%d %H:%M')
+            rut_nombre = group['Rutina_Nombre'].iloc[0]
+            sesiones_lista.append((fecha_sesion, rut_nombre, id_sesion))
+            
+        # Sort by date descending
+        sesiones_lista.sort(key=lambda x: x[0], reverse=True)
+        
+        if sesiones_lista:
+            opciones_formateadas = [f"{f} | {r}" for f, r, _ in sesiones_lista]
+            seleccion = st.selectbox("Seleccionar Sesión Pasada", range(len(opciones_formateadas)), format_func=lambda i: opciones_formateadas[i])
+            
+            _, _, id_sesion_sel = sesiones_lista[seleccion]
+            
+            df_sesion_sel = df_hist_full[df_hist_full['ID_Sesion'] == id_sesion_sel].copy()
+            fecha_sel = df_sesion_sel['Fecha'].iloc[0].strftime('%d de %B, %Y a las %H:%M')
+            rotulo_rutina = df_sesion_sel['Rutina_Nombre'].iloc[0]
+            
+            st.divider()
+            st.subheader(f"{rotulo_rutina}")
+            st.caption(f"🗓️ {fecha_sel}")
+            
+            # Calculo de Volumen Total de la sesion (convertimos a unidad global para métrica única)
+            volumen_total = 0
+            for _, row in df_sesion_sel.iterrows():
+                p_kgs = convert_weight(row['Peso'], row.get('Unidad', 'Kg'), UNIDAD_GLOBAL)
+                volumen_total += (p_kgs * row['Reps'])
+            
+            st.metric("Volumen Total", f"{volumen_total:,.1f} {UNIDAD_GLOBAL}")
+            
+            # Tabla Resumen Limpia
+            # Para mejor presentación, seleccionaremos columnas útiles
+            df_resumen = df_sesion_sel[['Ejercicio', 'Peso', 'Unidad', 'Reps']].copy()
+            # Opcional: Agregar # de Set simulado indexando por grupo de ejercicio
+            df_resumen['Set'] = df_resumen.groupby('Ejercicio').cumcount() + 1
+            df_resumen = df_resumen[['Ejercicio', 'Set', 'Peso', 'Unidad', 'Reps']]
+            
+            st.dataframe(
+                df_resumen,
+                hide_index=True,
+                use_container_width=True
+            )
+            
+            if st.button("Eliminar esta Sesión Completa 🗑️", type="primary"):
+                df_updated = df_hist_full[df_hist_full['ID_Sesion'] != id_sesion_sel]
+                df_updated.to_csv(CSV_FILE, index=False)
+                st.success("Sesión eliminada correctamente.")
+                st.rerun()
+                
+        else:
+            st.info("No tienes rutinas agrupadas por sesión completadas usando el Gestor.")
     else:
-        st.info("No hay registros aún. ¡Empieza a entrenar!")
+        st.info("No hay registros históricos aún.")
 
 with tab2:
     st.header("Composición Corporal")
