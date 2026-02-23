@@ -1,0 +1,19 @@
+{
+    "Empuje": [
+        "Press Banca Plano",
+        "Press Militar (Overhead)",
+        "Fondos de Pecho",
+        "Extensión Tríceps en Polea"
+    ],
+    "Tracción": [
+        "Dominadas (Pull Ups)",
+        "Remo con Barra",
+        "Curl Bíceps con Barra"
+    ],
+    "Pierna": [
+        "Sentadilla (Squat)",
+        "Prensa Piernas",
+        "Curl Femoral Tumbado",
+        "Elevación de Talones de Pie"
+    ]
+}
