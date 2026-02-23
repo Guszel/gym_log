@@ -298,65 +298,84 @@ with tab1:
                     st.session_state.start_timer = True # Trigger timer on save
     else:
         routine_exercises = routines[rutina_seleccionada]
-        with st.form(f"routine_form_{rutina_seleccionada}", clear_on_submit=False):
-            routine_results = {}
-            for i, ex_name in enumerate(routine_exercises):
-                sets_count = 3
-                reps_meta = []
+        routine_results = {}
+        
+        for i, ex_name in enumerate(routine_exercises):
+            if i > 0:
+                st.divider()
                 
+            state_key = f"sets_{rutina_seleccionada}_{i}"
+            if state_key not in st.session_state:
+                st.session_state[state_key] = [
+                    {"Set": s + 1, "Meta": "-", "Peso": 0.0, "Unidad": UNIDAD_GLOBAL, "Reps": 0, "Notas": ""}
+                    for s in range(3)
+                ]
+            
+            col_title, col_btn1, col_btn2 = st.columns([8, 1, 1])
+            with col_title:
                 st.markdown(f"**{i+1}. {ex_name}**")
-                
-                initial_data = []
-                for s in range(sets_count):
-                    meta_str = f"{reps_meta[s]} reps" if s < len(reps_meta) else "-"
-                    initial_data.append({
-                        "Set": s + 1,
-                        "Meta": meta_str,
-                        "Peso": 0.0,
-                        "Unidad": UNIDAD_GLOBAL,
-                        "Reps": 0,
-                        "Notas": ""
+            with col_btn1:
+                if st.button("➕", key=f"add_{rutina_seleccionada}_{i}", use_container_width=True):
+                    next_set = len(st.session_state[state_key]) + 1
+                    st.session_state[state_key].append(
+                        {"Set": next_set, "Meta": "-", "Peso": 0.0, "Unidad": UNIDAD_GLOBAL, "Reps": 0, "Notas": ""}
+                    )
+                    st.rerun()
+            with col_btn2:
+                if st.button("➖", key=f"sub_{rutina_seleccionada}_{i}", use_container_width=True):
+                    if len(st.session_state[state_key]) > 1:
+                        st.session_state[state_key].pop()
+                        st.rerun()
+            
+            df_initial = pd.DataFrame(st.session_state[state_key])
+            
+            edited_df = st.data_editor(
+                df_initial,
+                column_config={
+                    "Set": st.column_config.NumberColumn(disabled=True),
+                    "Meta": st.column_config.TextColumn(disabled=True),
+                    "Peso": st.column_config.NumberColumn(min_value=0.0, step=2.5, format="%.1f"),
+                    "Unidad": st.column_config.SelectboxColumn(options=["Kg", "Lbs"], default=UNIDAD_GLOBAL),
+                    "Reps": st.column_config.NumberColumn(min_value=0, step=1)
+                },
+                hide_index=True,
+                key=f"editor_{rutina_seleccionada}_{i}_{len(st.session_state[state_key])}",
+                use_container_width=True
+            )
+            
+            # Save user edits back to session state to prevent dataloss on rerun
+            st.session_state[state_key] = edited_df.to_dict('records')
+            routine_results[ex_name] = edited_df
+            
+        st.write("") # spacing
+        
+        submitted_routine = st.button("FINALIZAR Y GUARDAR RUTINA 💾", use_container_width=True, type="primary")
+        if submitted_routine:
+            id_sesion = datetime.now().strftime("%Y%m%d%H%M%S")
+            all_sets = []
+            for ex_name, df_res in routine_results.items():
+                valid_sets = df_res[(df_res['Peso'] > 0) | (df_res['Reps'] > 0)]
+                for _, row in valid_sets.iterrows():
+                    all_sets.append({
+                        'Ejercicio': ex_name,
+                        'Peso': row['Peso'],
+                        'Unidad': row.get('Unidad', UNIDAD_GLOBAL),
+                        'Reps': row['Reps'],
+                        'Notas': row['Notas'] if pd.notna(row['Notas']) else ''
                     })
+            
+            if all_sets:
+                save_routine(rutina_seleccionada, id_sesion, all_sets)
+                st.toast(f"✅ Rutina '{rutina_seleccionada}' guardada con éxito.")
+                st.session_state.start_timer = True
                 
-                df_initial = pd.DataFrame(initial_data)
-                
-                edited_df = st.data_editor(
-                    df_initial,
-                    column_config={
-                        "Set": st.column_config.NumberColumn(disabled=True),
-                        "Meta": st.column_config.TextColumn(disabled=True),
-                        "Peso": st.column_config.NumberColumn(min_value=0.0, step=2.5, format="%.1f"),
-                        "Unidad": st.column_config.SelectboxColumn(options=["Kg", "Lbs"], default=UNIDAD_GLOBAL),
-                        "Reps": st.column_config.NumberColumn(min_value=0, step=1)
-                    },
-                    hide_index=True,
-                    key=f"editor_{rutina_seleccionada}_{i}",
-                    use_container_width=True
-                )
-                routine_results[ex_name] = edited_df
-                st.write("") # spacing
-                
-            submitted_routine = st.form_submit_button("FINALIZAR Y GUARDAR RUTINA 💾", use_container_width=True)
-            if submitted_routine:
-                id_sesion = datetime.now().strftime("%Y%m%d%H%M%S")
-                all_sets = []
-                for ex_name, df_res in routine_results.items():
-                    valid_sets = df_res[(df_res['Peso'] > 0) | (df_res['Reps'] > 0)]
-                    for _, row in valid_sets.iterrows():
-                        all_sets.append({
-                            'Ejercicio': ex_name,
-                            'Peso': row['Peso'],
-                            'Unidad': row.get('Unidad', UNIDAD_GLOBAL),
-                            'Reps': row['Reps'],
-                            'Notas': row['Notas'] if pd.notna(row['Notas']) else ''
-                        })
-                
-                if all_sets:
-                    save_routine(rutina_seleccionada, id_sesion, all_sets)
-                    st.success(f"✅ Rutina '{rutina_seleccionada}' guardada con éxito.")
-                    st.session_state.start_timer = True
-                else:
-                    st.warning("⚠️ No se registraron sets (todos tenían 0 peso y 0 reps).")
+                # Cleanup session state for next routine execution
+                for key in list(st.session_state.keys()):
+                    if key.startswith(f"sets_{rutina_seleccionada}_") or key.startswith(f"editor_{rutina_seleccionada}_"):
+                        del st.session_state[key]
+                st.rerun()
+            else:
+                st.warning("⚠️ No se registraron sets (todos tenían 0 peso y 0 reps).")
                 
     # --- Rest Timer Section ---
     st.divider()
@@ -975,4 +994,3 @@ with tab6:
                         st.rerun()
     else:
         st.info("No tienes rutinas personalizadas creadas aún.")
-
