@@ -28,7 +28,7 @@ st.set_page_config(
 
 # --- Mobile-First CSS Removed ---
 
-ROUTINES_FILE = 'rutinas.json'
+ROUTINES_FILE = 'plantillas_rutinas.json'
 EXERCISES_FILE = 'ejercicios_master.csv'
 
 DEFAULT_EXERCISES = {
@@ -97,6 +97,20 @@ def save_new_exercise(nombre, grupo):
         df = df_new
     df = df.drop_duplicates(subset=["Nombre del Ejercicio"])
     df.to_csv(EXERCISES_FILE, index=False)
+def save_routine_template(nombre, ejercicios):
+    routines = load_routines()
+    routines[nombre] = ejercicios
+    with open(ROUTINES_FILE, 'w', encoding='utf-8') as f:
+        json.dump(routines, f, ensure_ascii=False, indent=4)
+
+def delete_routine_template(nombre):
+    routines = load_routines()
+    if nombre in routines:
+        del routines[nombre]
+        with open(ROUTINES_FILE, 'w', encoding='utf-8') as f:
+            json.dump(routines, f, ensure_ascii=False, indent=4)
+        return True
+    return False
 
 EXERCISE_CATALOG = load_exercises()
 
@@ -205,7 +219,7 @@ if 'current_muscle_group' not in st.session_state:
 
 st.info(f"⚖️ **Peso:** {USER_PROFILE['current_weight']} kg | 🎯 **Meta:** {USER_PROFILE['goal_body_fat']}% Grasa | ⚡ **Sesión:** {st.session_state.current_muscle_group}")
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["Entrenamiento", "Composición Corporal", "Progreso Visual", "Nutrición", "⚙️ Configuración"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Entrenamiento", "Composición Corporal", "Progreso Visual", "Nutrición", "⚙️ Configuración", "🛠️ Crear Rutina"])
 
 with tab1:
     # 2. Workout Entry Form
@@ -245,10 +259,9 @@ with tab1:
         routine_exercises = routines[rutina_seleccionada]
         with st.form(f"routine_form_{rutina_seleccionada}", clear_on_submit=False):
             routine_results = {}
-            for i, ex_data in enumerate(routine_exercises):
-                ex_name = ex_data["ejercicio"]
-                sets_count = ex_data["sets"]
-                reps_meta = ex_data.get("reps_meta", [])
+            for i, ex_name in enumerate(routine_exercises):
+                sets_count = 3
+                reps_meta = []
                 
                 st.markdown(f"**{i+1}. {ex_name}**")
                 
@@ -851,3 +864,48 @@ with tab5:
             edited_ej.to_csv(EXERCISES_FILE, index=False)
             st.success("Diccionario actualizado exitosamente.")
             st.rerun()
+
+with tab6:
+    st.header("Creador de Rutinas")
+    st.write("Crea plantillas personalizadas agrupando ejercicios de tu diccionario.")
+    
+    with st.form("create_routine_form", clear_on_submit=True):
+        rutina_nombre = st.text_input("Nombre de la Rutina", placeholder="Ej: Día de Empuje")
+        
+        # Flatten the catalog to a simple list for the multiselect
+        all_exercises = []
+        for v in EXERCISE_CATALOG.values():
+            all_exercises.extend(v)
+        all_exercises = sorted(all_exercises)
+        
+        ejercicios_seleccionados = st.multiselect("Ejercicios", all_exercises)
+        
+        submit_rutina = st.form_submit_button("Guardar Rutina 💾", use_container_width=True)
+        
+        if submit_rutina:
+            if not rutina_nombre or not ejercicios_seleccionados:
+                st.error("Por favor, ingresa un nombre y selecciona al menos un ejercicio.")
+            else:
+                save_routine_template(rutina_nombre, ejercicios_seleccionados)
+                st.success(f"Rutina '{rutina_nombre}' guardada con éxito.")
+                st.rerun()
+                
+    st.divider()
+    st.subheader("Tus Rutinas Guardadas")
+    
+    rutinas_guardadas = load_routines()
+    rutinas_filtradas = {k: v for k, v in rutinas_guardadas.items() if k != "Libre (Histórico)"}
+    
+    if rutinas_filtradas:
+        for r_name, r_ejs in rutinas_filtradas.items():
+            with st.container(border=True):
+                col_r1, col_r2 = st.columns([4, 1])
+                with col_r1:
+                    st.markdown(f"**{r_name}**")
+                    st.caption(", ".join(r_ejs))
+                with col_r2:
+                    if st.button("🗑️", key=f"del_rutina_{r_name}", use_container_width=True):
+                        delete_routine_template(r_name)
+                        st.rerun()
+    else:
+        st.info("No tienes rutinas personalizadas creadas aún.")
