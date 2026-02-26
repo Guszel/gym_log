@@ -35,6 +35,18 @@ except Exception as e:
     st.error("⚠️ Es necesario configurar las credenciales de Google Sheets en Streamlit Cloud para continuar. Configura st.secrets['connections']['gsheets']")
     st.stop()
 
+def safe_gsheets_update(worksheet_name, df):
+    try:
+        conn.update(worksheet=worksheet_name, data=df)
+    except Exception as e:
+        if "UnsupportedOperationError" in str(type(e).__name__) or "WorksheetNotFound" in str(type(e).__name__):
+            conn.create(worksheet=worksheet_name, data=df)
+        else:
+            try:
+                conn.create(worksheet=worksheet_name, data=df)
+            except Exception:
+                pass
+
 # --- Helpers de Configuración Local ---
 def load_config():
     if os.path.exists(CONFIG_FILE):
@@ -126,7 +138,7 @@ def load_exercises():
             records.append({"Nombre del Ejercicio": ej, "Grupo Muscular": grupo})
     df_default = pd.DataFrame(records)
     try:
-        conn.update(worksheet="Ejercicios", data=df_default)
+        safe_gsheets_update("Ejercicios", df_default)
     except Exception:
         pass
     return {k: sorted(v) for k, v in DEFAULT_EXERCISES.items()}
@@ -140,14 +152,14 @@ def save_new_exercise(nombre, grupo):
     except Exception:
         df = df_new
     df = df.drop_duplicates(subset=["Nombre del Ejercicio"])
-    conn.update(worksheet="Ejercicios", data=df)
+    safe_gsheets_update("Ejercicios", df)
 
 def save_routine_template(nombre, ejercicios):
     routines = load_routines()
     routines[nombre] = ejercicios
     records = [{"Nombre Rutina": k, "Ejercicios": ", ".join(v)} for k, v in routines.items()]
     df = pd.DataFrame(records)
-    conn.update(worksheet="Rutinas", data=df)
+    safe_gsheets_update("Rutinas", df)
 
 def delete_routine_template(nombre):
     routines = load_routines()
@@ -158,7 +170,7 @@ def delete_routine_template(nombre):
         if df.empty:
             # GSheets connection requires at least an empty dataframe structure
             df = pd.DataFrame(columns=["Nombre Rutina", "Ejercicios"])
-        conn.update(worksheet="Rutinas", data=df)
+        safe_gsheets_update("Rutinas", df)
         return True
     return False
 
@@ -193,7 +205,7 @@ def delete_workout(index):
         df = df.drop(index)
         if df.empty:
             df = pd.DataFrame(columns=["Fecha", "Rutina_Nombre", "ID_Sesion", "Ejercicio", "Peso", "Reps", "Unidad", "Notas"])
-        conn.update(worksheet="Logs", data=df)
+        safe_gsheets_update("Logs", df)
         return True
     return False
 
@@ -211,7 +223,7 @@ def save_workout(ejercicio, peso, reps, notas, unidad_input, rutina_nombre="Libr
         "Notas": notas
     }
     df = pd.concat([df, pd.DataFrame([new_entry])], ignore_index=True)
-    conn.update(worksheet="Logs", data=df)
+    safe_gsheets_update("Logs", df)
     return True
 
 def save_routine(rutina_nombre, id_sesion, df_sets):
@@ -234,7 +246,7 @@ def save_routine(rutina_nombre, id_sesion, df_sets):
             "Notas": s['Notas']
         })
     df = pd.concat([df, pd.DataFrame(records)], ignore_index=True)
-    conn.update(worksheet="Logs", data=df)
+    safe_gsheets_update("Logs", df)
     return True
 
 def save_body_comp(peso, grasa_pct, ffmi):
@@ -584,7 +596,7 @@ with tab_hist:
                 df_updated = df_hist_full[df_hist_full['ID_Sesion'] != id_sesion_sel]
                 if df_updated.empty:
                     df_updated = pd.DataFrame(columns=["Fecha", "Rutina_Nombre", "ID_Sesion", "Ejercicio", "Peso", "Reps", "Unidad", "Notas"])
-                conn.update(worksheet="Logs", data=df_updated)
+                safe_gsheets_update("Logs", df_updated)
                 st.success("Sesión eliminada correctamente.")
                 st.rerun()
                 
@@ -1037,7 +1049,7 @@ with tab5:
             
             if st.button("Guardar Cambios 💾", type="primary"):
                 edited_ej = edited_ej.dropna(subset=['Nombre del Ejercicio'])
-                conn.update(worksheet="Ejercicios", data=edited_ej)
+                safe_gsheets_update("Ejercicios", edited_ej)
                 st.success("Diccionario actualizado exitosamente.")
                 st.rerun()
     except Exception:
@@ -1087,3 +1099,4 @@ with tab6:
                         st.rerun()
     else:
         st.info("No tienes rutinas personalizadas creadas aún.")
+
