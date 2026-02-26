@@ -109,9 +109,9 @@ def load_routines():
         df = conn.read(worksheet="Rutinas", ttl=0)
         df = df.dropna(how="all")
         routines = {}
-        if not df.empty and 'Nombre Rutina' in df.columns and 'Ejercicios' in df.columns:
+        if not df.empty and 'Nombre_Rutina' in df.columns and 'Ejercicios' in df.columns:
             for _, row in df.iterrows():
-                rut_name = str(row['Nombre Rutina'])
+                rut_name = str(row['Nombre_Rutina'])
                 ex_list = [x.strip() for x in str(row['Ejercicios']).split(',') if x.strip()]
                 routines[rut_name] = ex_list
             return routines
@@ -155,22 +155,37 @@ def save_new_exercise(nombre, grupo):
     safe_gsheets_update("Ejercicios", df)
 
 def save_routine_template(nombre, ejercicios):
-    routines = load_routines()
-    routines[nombre] = ejercicios
-    records = [{"Nombre Rutina": k, "Ejercicios": ", ".join(v)} for k, v in routines.items()]
-    df = pd.DataFrame(records)
-    safe_gsheets_update("Rutinas", df)
+    try:
+        existing_data = conn.read(worksheet="Rutinas", ttl=0).dropna(how="all")
+        if existing_data.empty:
+            existing_data = pd.DataFrame(columns=['Nombre_Rutina', 'Ejercicios', 'Fecha_Creacion'])
+    except Exception:
+        existing_data = pd.DataFrame(columns=['Nombre_Rutina', 'Ejercicios', 'Fecha_Creacion'])
+        
+    # Remove older version if updating
+    if not existing_data.empty and 'Nombre_Rutina' in existing_data.columns:
+        existing_data = existing_data[existing_data['Nombre_Rutina'] != nombre]
+        
+    new_data = pd.DataFrame([{
+        "Nombre_Rutina": nombre, 
+        "Ejercicios": ", ".join(ejercicios),
+        "Fecha_Creacion": datetime.now().strftime("%Y-%m-%d %H:%M")
+    }])
+    
+    updated_data = pd.concat([existing_data, new_data], ignore_index=True).reset_index(drop=True)
+    safe_gsheets_update("Rutinas", updated_data)
 
 def delete_routine_template(nombre):
-    routines = load_routines()
-    if nombre in routines:
-        del routines[nombre]
-        records = [{"Nombre Rutina": k, "Ejercicios": ", ".join(v)} for k, v in routines.items()]
-        df = pd.DataFrame(records)
-        if df.empty:
-            # GSheets connection requires at least an empty dataframe structure
-            df = pd.DataFrame(columns=["Nombre Rutina", "Ejercicios"])
-        safe_gsheets_update("Rutinas", df)
+    try:
+        existing_data = conn.read(worksheet="Rutinas", ttl=0).dropna(how="all")
+    except Exception:
+        return False
+        
+    if not existing_data.empty and 'Nombre_Rutina' in existing_data.columns:
+        updated_data = existing_data[existing_data['Nombre_Rutina'] != nombre].reset_index(drop=True)
+        if updated_data.empty:
+            updated_data = pd.DataFrame(columns=['Nombre_Rutina', 'Ejercicios', 'Fecha_Creacion'])
+        safe_gsheets_update("Rutinas", updated_data)
         return True
     return False
 
@@ -182,16 +197,24 @@ def load_data():
         df = conn.read(worksheet="Logs", ttl=0)
         df = df.dropna(how="all")
         if df.empty:
-            return pd.DataFrame(columns=["Fecha", "Rutina_Nombre", "ID_Sesion", "Ejercicio", "Peso", "Reps", "Unidad", "Notas"])
-        if 'Rutina_Nombre' not in df.columns:
-            df['Rutina_Nombre'] = 'Legacy'
+            return pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
+            
+        # Legacy mappings
+        if 'Rutina' not in df.columns and 'Rutina_Nombre' in df.columns:
+            df = df.rename(columns={'Rutina_Nombre': 'Rutina'})
+        elif 'Rutina' not in df.columns:
+            df['Rutina'] = 'Legacy'
+            
+        if 'Set_No' not in df.columns:
+            df['Set_No'] = 1
+            
         if 'ID_Sesion' not in df.columns:
             df['ID_Sesion'] = 'N/A'
         if 'Unidad' not in df.columns:
             df['Unidad'] = 'Kg'
         return df
     except Exception:
-        return pd.DataFrame(columns=["Fecha", "Rutina_Nombre", "ID_Sesion", "Ejercicio", "Peso", "Reps", "Unidad", "Notas"])
+        return pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
 
 def load_body_comp_data():
     if os.path.exists(BODY_COMP_CSV_FILE):
@@ -200,53 +223,69 @@ def load_body_comp_data():
         return pd.DataFrame(columns=["Fecha", "Peso", "Grasa_pct", "FFMI"])
 
 def delete_workout(index):
-    df = load_data()
-    if index in df.index:
-        df = df.drop(index)
-        if df.empty:
-            df = pd.DataFrame(columns=["Fecha", "Rutina_Nombre", "ID_Sesion", "Ejercicio", "Peso", "Reps", "Unidad", "Notas"])
-        safe_gsheets_update("Logs", df)
-        return True
+    try:
+        existing_data = conn.read(worksheet="Logs", ttl=0).dropna(how="all")
+        if index in existing_data.index:
+            updated_data = existing_data.drop(index).reset_index(drop=True)
+            if updated_data.empty:
+                updated_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
+            safe_gsheets_update("Logs", updated_data)
+            return True
+    except Exception:
+        pass
     return False
 
-def save_workout(ejercicio, peso, reps, notas, unidad_input, rutina_nombre="Libre", id_sesion="N/A"):
-    peso_convertido = convert_weight(peso, unidad_input, UNIDAD_GLOBAL)
-    df = load_data()
+def save_workout(ejercicio, peso, reps, notas, unidad_input, rutina_nombre="Libre", id_sesion="N/A", set_no=1):
+    try:
+        existing_data = conn.read(worksheet="Logs", ttl=0).dropna(how="all")
+        if existing_data.empty:
+            existing_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
+    except Exception:
+        existing_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
+        
     new_entry = {
         "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "Rutina_Nombre": rutina_nombre,
         "ID_Sesion": id_sesion,
+        "Rutina": rutina_nombre,
         "Ejercicio": ejercicio,
-        "Peso": round(peso_convertido, 2),
+        "Set_No": set_no,
+        "Peso": peso,
+        "Unidad": unidad_input,
         "Reps": reps,
-        "Unidad": UNIDAD_GLOBAL,
         "Notas": notas
     }
-    df = pd.concat([df, pd.DataFrame([new_entry])], ignore_index=True)
-    safe_gsheets_update("Logs", df)
+    new_data_df = pd.DataFrame([new_entry])
+    updated_data = pd.concat([existing_data, new_data_df], ignore_index=True).reset_index(drop=True)
+    safe_gsheets_update("Logs", updated_data)
+    st.success("Datos sincronizados con Google Sheets")
     return True
 
 def save_routine(rutina_nombre, id_sesion, df_sets):
-    df = load_data()
+    try:
+        existing_data = conn.read(worksheet="Logs", ttl=0).dropna(how="all")
+        if existing_data.empty:
+            existing_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
+    except Exception:
+        existing_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
+        
     records = []
     fecha = datetime.now().strftime("%Y-%m-%d %H:%M")
     for s in df_sets:
-        unidad_input = s.get('Unidad', UNIDAD_GLOBAL)
-        peso_orig = s['Peso']
-        peso_convertido = convert_weight(peso_orig, unidad_input, UNIDAD_GLOBAL)
-        
         records.append({
             "Fecha": fecha,
-            "Rutina_Nombre": rutina_nombre,
             "ID_Sesion": id_sesion,
+            "Rutina": rutina_nombre,
             "Ejercicio": s['Ejercicio'],
-            "Peso": round(peso_convertido, 2),
+            "Set_No": s.get('Set', 1),
+            "Peso": s['Peso'],
+            "Unidad": s.get('Unidad', UNIDAD_GLOBAL),
             "Reps": s['Reps'],
-            "Unidad": UNIDAD_GLOBAL,
-            "Notas": s['Notas']
+            "Notas": s.get('Notas', '')
         })
-    df = pd.concat([df, pd.DataFrame(records)], ignore_index=True)
-    safe_gsheets_update("Logs", df)
+    new_data_df = pd.DataFrame(records)
+    updated_data = pd.concat([existing_data, new_data_df], ignore_index=True).reset_index(drop=True)
+    safe_gsheets_update("Logs", updated_data)
+    st.success("Datos sincronizados con Google Sheets")
     return True
 
 def save_body_comp(peso, grasa_pct, ffmi):
@@ -441,8 +480,9 @@ with tab1:
                     if peso_val > 0 or reps_val > 0:
                         all_sets.append({
                             'Ejercicio': ex_name,
+                            'Set': set_data.get('Set', 1),
                             'Peso': peso_val,
-                            'Unidad': set_data['Unidad'],
+                            'Unidad': set_data.get('Unidad', UNIDAD_GLOBAL),
                             'Reps': reps_val,
                             'Notas': set_data.get('Notas', '')
                         })
@@ -574,17 +614,15 @@ with tab_hist:
             # Calculo de Volumen Total de la sesion (convertimos a unidad global para métrica única)
             volumen_total = 0
             for _, row in df_sesion_sel.iterrows():
-                p_kgs = convert_weight(row['Peso'], row.get('Unidad', 'Kg'), UNIDAD_GLOBAL)
-                volumen_total += (p_kgs * row['Reps'])
+                p_kgs = convert_weight(float(row['Peso']), row.get('Unidad', 'Kg'), UNIDAD_GLOBAL)
+                volumen_total += (p_kgs * int(row['Reps']))
             
             st.metric("Volumen Total", f"{volumen_total:,.1f} {UNIDAD_GLOBAL}")
             
             # Tabla Resumen Limpia
-            # Para mejor presentación, seleccionaremos columnas útiles
-            df_resumen = df_sesion_sel[['Ejercicio', 'Peso', 'Unidad', 'Reps']].copy()
-            # Opcional: Agregar # de Set simulado indexando por grupo de ejercicio
-            df_resumen['Set'] = df_resumen.groupby('Ejercicio').cumcount() + 1
-            df_resumen = df_resumen[['Ejercicio', 'Set', 'Peso', 'Unidad', 'Reps']]
+            # Las columnas ahora son exactas a las nuevas estructuras
+            columnas_disp = [c for c in ['Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps'] if c in df_sesion_sel.columns]
+            df_resumen = df_sesion_sel[columnas_disp].copy()
             
             st.dataframe(
                 df_resumen,
@@ -593,9 +631,9 @@ with tab_hist:
             )
             
             if st.button("Eliminar esta Sesión Completa 🗑️", type="primary"):
-                df_updated = df_hist_full[df_hist_full['ID_Sesion'] != id_sesion_sel]
+                df_updated = df_hist_full[df_hist_full['ID_Sesion'] != id_sesion_sel].reset_index(drop=True)
                 if df_updated.empty:
-                    df_updated = pd.DataFrame(columns=["Fecha", "Rutina_Nombre", "ID_Sesion", "Ejercicio", "Peso", "Reps", "Unidad", "Notas"])
+                    df_updated = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
                 safe_gsheets_update("Logs", df_updated)
                 st.success("Sesión eliminada correctamente.")
                 st.rerun()
@@ -716,7 +754,10 @@ with tab3:
             return "Otros"
             
         df_train['Grupo Muscular'] = df_train['Ejercicio'].apply(get_category)
-        df_train['Volumen'] = df_train['Peso'] * df_train['Reps']
+        
+        # Normalize weights to global unit for fair volume comparison
+        df_train['Peso_Norm'] = df_train.apply(lambda row: convert_weight(float(row['Peso']), row.get('Unidad', 'Kg'), UNIDAD_GLOBAL), axis=1)
+        df_train['Volumen'] = df_train['Peso_Norm'] * df_train['Reps']
         
         # Ensure 'Fecha' is datetime
         df_train['Fecha'] = pd.to_datetime(df_train['Fecha'])
@@ -763,17 +804,17 @@ with tab3:
     
     # --- Gráfico 3: Volumen Histórico por Rutina ---
     st.subheader("Evolución de Volumen por Rutina")
-    if not df_train.empty and 'Rutina_Nombre' in df_train.columns:
-        rutinas_disponibles = [r for r in df_train['Rutina_Nombre'].unique() if r not in ["Legacy", "Libre"] and pd.notna(r)]
+    if not df_train.empty and 'Rutina' in df_train.columns:
+        rutinas_disponibles = [r for r in df_train['Rutina'].unique() if r not in ["Legacy", "Libre"] and pd.notna(r)]
         
         if rutinas_disponibles:
             rutina_filtro = st.selectbox("Seleccionar Rutina", rutinas_disponibles)
-            df_rutina = df_train[df_train['Rutina_Nombre'] == rutina_filtro].copy()
+            df_rutina = df_train[df_train['Rutina'] == rutina_filtro].copy()
             
             if not df_rutina.empty:
                 df_rutina['Fecha'] = pd.to_datetime(df_rutina['Fecha'])
                 df_rutina['Día'] = df_rutina['Fecha'].dt.date
-                df_rutina['Volumen'] = df_rutina['Peso'] * df_rutina['Reps']
+                df_rutina['Volumen'] = df_rutina['Peso_Norm'] * df_rutina['Reps']
                 
                 volumen_por_sesion = df_rutina.groupby('Día')['Volumen'].sum().reset_index()
                 
@@ -1099,4 +1140,3 @@ with tab6:
                         st.rerun()
     else:
         st.info("No tienes rutinas personalizadas creadas aún.")
-
