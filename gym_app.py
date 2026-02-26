@@ -7,9 +7,11 @@ import plotly.graph_objects as go
 import google.generativeai as genai
 from PIL import Image
 import json
+from streamlit_gsheets import GSheetsConnection
 
 # --- Configuration ---
-CSV_FILE = 'training_log.csv'
+# Local settings file
+CONFIG_FILE = 'config.json'
 BODY_COMP_CSV_FILE = 'body_comp_log.csv'
 USER_PROFILE = {
     "name": "Usuario",
@@ -26,12 +28,14 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- Mobile-First CSS Removed ---
+# --- Configurar Conexión a Google Sheets ---
+try:
+    conn = st.connection("gsheets", type=GSheetsConnection)
+except Exception as e:
+    st.error("⚠️ Es necesario configurar las credenciales de Google Sheets en Streamlit Cloud para continuar. Configura st.secrets['connections']['gsheets']")
+    st.stop()
 
-ROUTINES_FILE = 'plantillas_rutinas.json'
-EXERCISES_FILE = 'ejercicios_master.csv'
-CONFIG_FILE = 'config.json'
-
+# --- Helpers de Configuración Local ---
 def load_config():
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
@@ -89,49 +93,72 @@ DEFAULT_EXERCISES = {
 }
 
 def load_routines():
-    if os.path.exists(ROUTINES_FILE):
-        with open(ROUTINES_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
+    try:
+        df = conn.read(worksheet="Rutinas", ttl=0)
+        df = df.dropna(how="all")
+        routines = {}
+        if not df.empty and 'Nombre Rutina' in df.columns and 'Ejercicios' in df.columns:
+            for _, row in df.iterrows():
+                rut_name = str(row['Nombre Rutina'])
+                ex_list = [x.strip() for x in str(row['Ejercicios']).split(',') if x.strip()]
+                routines[rut_name] = ex_list
+            return routines
+    except Exception:
+        pass
     return {}
 
 def load_exercises():
-    if os.path.exists(EXERCISES_FILE):
-        df = pd.read_csv(EXERCISES_FILE)
+    try:
+        df = conn.read(worksheet="Ejercicios", ttl=0)
+        df = df.dropna(how="all")
         catalog = {}
-        if 'Grupo Muscular' in df.columns and 'Nombre del Ejercicio' in df.columns:
+        if not df.empty and 'Grupo Muscular' in df.columns and 'Nombre del Ejercicio' in df.columns:
             for grupo, group_df in df.groupby('Grupo Muscular'):
-                catalog[grupo] = sorted(group_df['Nombre del Ejercicio'].tolist())
-        return catalog
-    else:
-        records = []
-        for grupo, ejercicios in DEFAULT_EXERCISES.items():
-            for ej in ejercicios:
-                records.append({"Nombre del Ejercicio": ej, "Grupo Muscular": grupo})
-        df = pd.DataFrame(records)
-        df.to_csv(EXERCISES_FILE, index=False)
-        return {k: sorted(v) for k, v in DEFAULT_EXERCISES.items()}
+                catalog[grupo] = sorted(group_df['Nombre del Ejercicio'].astype(str).tolist())
+            return catalog
+    except Exception:
+        pass
+        
+    # Inicialización por defecto en GSheets
+    records = []
+    for grupo, ejercicios in DEFAULT_EXERCISES.items():
+        for ej in ejercicios:
+            records.append({"Nombre del Ejercicio": ej, "Grupo Muscular": grupo})
+    df_default = pd.DataFrame(records)
+    try:
+        conn.update(worksheet="Ejercicios", data=df_default)
+    except Exception:
+        pass
+    return {k: sorted(v) for k, v in DEFAULT_EXERCISES.items()}
 
 def save_new_exercise(nombre, grupo):
     df_new = pd.DataFrame([{"Nombre del Ejercicio": nombre, "Grupo Muscular": grupo}])
-    if os.path.exists(EXERCISES_FILE):
-        df_exist = pd.read_csv(EXERCISES_FILE)
+    try:
+        df_exist = conn.read(worksheet="Ejercicios", ttl=0)
+        df_exist = df_exist.dropna(how="all")
         df = pd.concat([df_exist, df_new], ignore_index=True)
-    else:
+    except Exception:
         df = df_new
     df = df.drop_duplicates(subset=["Nombre del Ejercicio"])
-    df.to_csv(EXERCISES_FILE, index=False)
+    conn.update(worksheet="Ejercicios", data=df)
+
 def save_routine_template(nombre, ejercicios):
     routines = load_routines()
     routines[nombre] = ejercicios
-    with open(ROUTINES_FILE, 'w', encoding='utf-8') as f:
-        json.dump(routines, f, ensure_ascii=False, indent=4)
+    records = [{"Nombre Rutina": k, "Ejercicios": ", ".join(v)} for k, v in routines.items()]
+    df = pd.DataFrame(records)
+    conn.update(worksheet="Rutinas", data=df)
 
 def delete_routine_template(nombre):
     routines = load_routines()
     if nombre in routines:
         del routines[nombre]
-        with open(ROUTINES_FILE, 'w', encoding='utf-8') as f:
-            json.dump(routines, f, ensure_ascii=False, indent=4)
+        records = [{"Nombre Rutina": k, "Ejercicios": ", ".join(v)} for k, v in routines.items()]
+        df = pd.DataFrame(records)
+        if df.empty:
+            # GSheets connection requires at least an empty dataframe structure
+            df = pd.DataFrame(columns=["Nombre Rutina", "Ejercicios"])
+        conn.update(worksheet="Rutinas", data=df)
         return True
     return False
 
@@ -139,16 +166,19 @@ EXERCISE_CATALOG = load_exercises()
 
 # --- Data Persistence ---
 def load_data():
-    if os.path.exists(CSV_FILE):
-        df = pd.read_csv(CSV_FILE)
+    try:
+        df = conn.read(worksheet="Logs", ttl=0)
+        df = df.dropna(how="all")
+        if df.empty:
+            return pd.DataFrame(columns=["Fecha", "Rutina_Nombre", "ID_Sesion", "Ejercicio", "Peso", "Reps", "Unidad", "Notas"])
         if 'Rutina_Nombre' not in df.columns:
             df['Rutina_Nombre'] = 'Legacy'
         if 'ID_Sesion' not in df.columns:
             df['ID_Sesion'] = 'N/A'
         if 'Unidad' not in df.columns:
-            df['Unidad'] = 'Kg' # Legacy default
+            df['Unidad'] = 'Kg'
         return df
-    else:
+    except Exception:
         return pd.DataFrame(columns=["Fecha", "Rutina_Nombre", "ID_Sesion", "Ejercicio", "Peso", "Reps", "Unidad", "Notas"])
 
 def load_body_comp_data():
@@ -161,14 +191,14 @@ def delete_workout(index):
     df = load_data()
     if index in df.index:
         df = df.drop(index)
-        df.to_csv(CSV_FILE, index=False)
+        if df.empty:
+            df = pd.DataFrame(columns=["Fecha", "Rutina_Nombre", "ID_Sesion", "Ejercicio", "Peso", "Reps", "Unidad", "Notas"])
+        conn.update(worksheet="Logs", data=df)
         return True
     return False
 
 def save_workout(ejercicio, peso, reps, notas, unidad_input, rutina_nombre="Libre", id_sesion="N/A"):
-    # Convert right away to global unit
     peso_convertido = convert_weight(peso, unidad_input, UNIDAD_GLOBAL)
-
     df = load_data()
     new_entry = {
         "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -181,7 +211,7 @@ def save_workout(ejercicio, peso, reps, notas, unidad_input, rutina_nombre="Libr
         "Notas": notas
     }
     df = pd.concat([df, pd.DataFrame([new_entry])], ignore_index=True)
-    df.to_csv(CSV_FILE, index=False)
+    conn.update(worksheet="Logs", data=df)
     return True
 
 def save_routine(rutina_nombre, id_sesion, df_sets):
@@ -189,7 +219,6 @@ def save_routine(rutina_nombre, id_sesion, df_sets):
     records = []
     fecha = datetime.now().strftime("%Y-%m-%d %H:%M")
     for s in df_sets:
-        # Expected df_sets dict has 'Unidad'
         unidad_input = s.get('Unidad', UNIDAD_GLOBAL)
         peso_orig = s['Peso']
         peso_convertido = convert_weight(peso_orig, unidad_input, UNIDAD_GLOBAL)
@@ -205,7 +234,7 @@ def save_routine(rutina_nombre, id_sesion, df_sets):
             "Notas": s['Notas']
         })
     df = pd.concat([df, pd.DataFrame(records)], ignore_index=True)
-    df.to_csv(CSV_FILE, index=False)
+    conn.update(worksheet="Logs", data=df)
     return True
 
 def save_body_comp(peso, grasa_pct, ffmi):
@@ -226,18 +255,22 @@ def save_body_comp(peso, grasa_pct, ffmi):
 
 with st.sidebar:
     st.header("⚙️ Opciones")
-    st.write("Exporta un respaldo de tus datos localmente.")
+    st.write("Exporta un respaldo de tus datos.")
     
-    if os.path.exists(CSV_FILE):
-        with open(CSV_FILE, "rb") as f:
+    try:
+        df_logs = conn.read(worksheet="Logs", ttl=0)
+        if not df_logs.empty:
+            csv_logs = df_logs.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="📥 Exportar Entrenamientos (CSV)",
-                data=f,
+                data=csv_logs,
                 file_name="training_log.csv",
                 mime="text/csv",
                 use_container_width=True
             )
-            
+    except Exception:
+        pass
+        
     if os.path.exists(BODY_COMP_CSV_FILE):
         with open(BODY_COMP_CSV_FILE, "rb") as f:
             st.download_button(
@@ -549,7 +582,9 @@ with tab_hist:
             
             if st.button("Eliminar esta Sesión Completa 🗑️", type="primary"):
                 df_updated = df_hist_full[df_hist_full['ID_Sesion'] != id_sesion_sel]
-                df_updated.to_csv(CSV_FILE, index=False)
+                if df_updated.empty:
+                    df_updated = pd.DataFrame(columns=["Fecha", "Rutina_Nombre", "ID_Sesion", "Ejercicio", "Peso", "Reps", "Unidad", "Notas"])
+                conn.update(worksheet="Logs", data=df_updated)
                 st.success("Sesión eliminada correctamente.")
                 st.rerun()
                 
@@ -985,22 +1020,28 @@ with tab5:
     st.divider()
     st.subheader("Catálogo Actual")
     
-    if os.path.exists(EXERCISES_FILE):
-        df_ej = pd.read_csv(EXERCISES_FILE)
-        df_ej = df_ej.sort_values(by=["Grupo Muscular", "Nombre del Ejercicio"])
-        
-        st.write("💡 Selecciona una fila para eliminarla (selecciona a la izquierda y presiona tecla Delete/Retroceso) o modifica el texto. Presiona 'Guardar Cambios' para aplicar.")
-        edited_ej = st.data_editor(
-            df_ej,
-            num_rows="dynamic",
-            use_container_width=True,
-            key="exercises_editor_table"
-        )
-        
-        if st.button("Guardar Cambios 💾", type="primary"):
-            edited_ej.to_csv(EXERCISES_FILE, index=False)
-            st.success("Diccionario actualizado exitosamente.")
-            st.rerun()
+    try:
+        df_ej = conn.read(worksheet="Ejercicios", ttl=0)
+        df_ej = df_ej.dropna(how="all")
+        if not df_ej.empty and 'Grupo Muscular' in df_ej.columns and 'Nombre del Ejercicio' in df_ej.columns:
+            df_ej = df_ej.sort_values(by=["Grupo Muscular", "Nombre del Ejercicio"])
+            
+            st.write("💡 Selecciona una fila para eliminarla (selecciona a la izquierda y presiona tecla Delete/Retroceso) o modifica el texto. Presiona 'Guardar Cambios' para aplicar.")
+            edited_ej = st.data_editor(
+                df_ej,
+                num_rows="dynamic",
+                use_container_width=True,
+                key="exercises_editor_table",
+                hide_index=True
+            )
+            
+            if st.button("Guardar Cambios 💾", type="primary"):
+                edited_ej = edited_ej.dropna(subset=['Nombre del Ejercicio'])
+                conn.update(worksheet="Ejercicios", data=edited_ej)
+                st.success("Diccionario actualizado exitosamente.")
+                st.rerun()
+    except Exception:
+        st.info("Configura tu base de datos para ver el catálogo interactivo.")
 
 with tab6:
     st.header("Creador de Rutinas")
