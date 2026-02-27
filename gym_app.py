@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+import time
 import os
 import plotly.express as px
 import plotly.graph_objects as go
@@ -110,9 +111,10 @@ def initialize_data():
     if "exercises" not in st.session_state:
         st.session_state.exercises = load_exercises()
         
+@st.cache_data(ttl=600, show_spinner=False)
 def load_routines():
     try:
-        df = conn.read(worksheet="Rutinas", ttl=0)
+        df = conn.read(worksheet="Rutinas", ttl=600)
         df = df.dropna(how="all")
         routines = {}
         if not df.empty and 'Nombre_Rutina' in df.columns and 'Ejercicios' in df.columns:
@@ -125,9 +127,10 @@ def load_routines():
         pass
     return {}
 
+@st.cache_data(ttl=600, show_spinner=False)
 def load_exercises():
     try:
-        df = conn.read(worksheet="Ejercicios", ttl=0)
+        df = conn.read(worksheet="Ejercicios", ttl=600)
         df = df.dropna(how="all")
         catalog = {}
         if not df.empty and 'Grupo Muscular' in df.columns and 'Nombre del Ejercicio' in df.columns:
@@ -139,6 +142,10 @@ def load_exercises():
         
     return {k: sorted(v) for k, v in DEFAULT_EXERCISES.items()}
 
+def invalidate_caches():
+    load_routines.clear()
+    load_exercises.clear()
+    
 def save_new_exercise(nombre, grupo):
     df_new = pd.DataFrame([{"Nombre del Ejercicio": nombre, "Grupo Muscular": grupo}])
     try:
@@ -150,6 +157,7 @@ def save_new_exercise(nombre, grupo):
     df = df.drop_duplicates(subset=["Nombre del Ejercicio"])
     safe_gsheets_update("Ejercicios", df)
     # Update memory
+    invalidate_caches()
     st.session_state.exercises = load_exercises()
 
 def save_routine_template(nombre, ejercicios):
@@ -173,6 +181,7 @@ def save_routine_template(nombre, ejercicios):
     updated_data = pd.concat([existing_data, new_data], ignore_index=True).reset_index(drop=True)
     safe_gsheets_update("Rutinas", updated_data)
     # Update memory
+    invalidate_caches()
     st.session_state.routines = load_routines()
 
 def delete_routine_template(nombre):
@@ -187,6 +196,7 @@ def delete_routine_template(nombre):
             updated_data = pd.DataFrame(columns=['Nombre_Rutina', 'Ejercicios', 'Fecha_Creacion'])
         safe_gsheets_update("Rutinas", updated_data)
         # Update memory
+        invalidate_caches()
         st.session_state.routines = load_routines()
         return True
     return False
@@ -396,6 +406,9 @@ with tab1:
                         except Exception as inner_e:
                             if "UnsupportedOperationError" in str(type(inner_e).__name__) or "WorksheetNotFound" in str(type(inner_e).__name__):
                                 conn.create(worksheet="Logs", data=updated_data)
+                            elif "429" in str(inner_e) or "Quota" in str(inner_e):
+                                time.sleep(2)
+                                raise Exception("Google Sheets está saturado (Error 429). Por favor, intenta de nuevo en 30 segundos.")
                             else:
                                 raise inner_e # Re-raise
                         
@@ -406,7 +419,10 @@ with tab1:
                         st.session_state.start_timer = False
                         
                     except Exception as e:
-                        st.error(f"❌ Error Técnico al Sincronizar: {str(e)}")
+                        if "429" in str(e) or "Quota" in str(e):
+                            st.error("Google Sheets está saturado. Por favor, espera 30 segundos antes de intentar sincronizar de nuevo.")
+                        else:
+                            st.error(f"❌ Error Técnico al Sincronizar: {str(e)}")
     else:
         routine_exercises = routines[rutina_seleccionada]
         routine_results = {}
@@ -554,6 +570,9 @@ with tab1:
                         except Exception as inner_e:
                             if "UnsupportedOperationError" in str(type(inner_e).__name__) or "WorksheetNotFound" in str(type(inner_e).__name__):
                                 conn.create(worksheet="Logs", data=updated_data)
+                            elif "429" in str(inner_e) or "Quota" in str(inner_e):
+                                time.sleep(2)
+                                raise Exception("Google Sheets está saturado (Error 429). Por favor, intenta de nuevo en 30 segundos.")
                             else:
                                 raise inner_e # Re-raise for the outer block to catch and display
 
@@ -569,7 +588,10 @@ with tab1:
                                 
                         st.session_state.start_timer = False
                     except Exception as e:
-                        st.error(f"❌ Error Técnico al Sincronizar: {str(e)}")
+                        if "429" in str(e) or "Quota" in str(e):
+                            st.error("Google Sheets está saturado. Por favor, espera 30 segundos antes de intentar sincronizar de nuevo.")
+                        else:
+                            st.error(f"❌ Error Técnico al Sincronizar: {str(e)}")
             else:
                 st.warning("⚠️ No se registraron sets (todos tenían 0 peso y 0 reps). No hay nada que guardar.")
                 
