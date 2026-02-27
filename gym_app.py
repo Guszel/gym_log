@@ -111,10 +111,10 @@ def initialize_data():
     if "exercises" not in st.session_state:
         st.session_state.exercises = load_exercises()
         
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def load_routines():
     try:
-        df = conn.read(worksheet="Rutinas", ttl=600)
+        df = conn.read(worksheet="Rutinas", ttl=3600)
         df = df.dropna(how="all")
         routines = {}
         if not df.empty and 'Nombre_Rutina' in df.columns and 'Ejercicios' in df.columns:
@@ -127,10 +127,10 @@ def load_routines():
         pass
     return {}
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def load_exercises():
     try:
-        df = conn.read(worksheet="Ejercicios", ttl=600)
+        df = conn.read(worksheet="Ejercicios", ttl=3600)
         df = df.dropna(how="all")
         catalog = {}
         if not df.empty and 'Grupo Muscular' in df.columns and 'Nombre del Ejercicio' in df.columns:
@@ -152,7 +152,9 @@ def invalidate_logs_cache():
 def save_new_exercise(nombre, grupo):
     df_new = pd.DataFrame([{"Nombre del Ejercicio": nombre, "Grupo Muscular": grupo}])
     try:
-        df_exist = conn.read(worksheet="Ejercicios", ttl=0)
+        mem_exercises = load_exercises()
+        flat_list = [{"Grupo Muscular": g, "Nombre del Ejercicio": e} for g, ex_list in mem_exercises.items() for e in ex_list]
+        df_exist = pd.DataFrame(flat_list)
         df_exist = df_exist.dropna(how="all")
         df = pd.concat([df_exist, df_new], ignore_index=True)
     except Exception:
@@ -165,7 +167,9 @@ def save_new_exercise(nombre, grupo):
 
 def save_routine_template(nombre, ejercicios):
     try:
-        existing_data = conn.read(worksheet="Rutinas", ttl=0).dropna(how="all")
+        mem_routines = load_routines()
+        flat_routines = [{"Nombre_Rutina": k, "Ejercicios": ", ".join(v)} for k, v in mem_routines.items()]
+        existing_data = pd.DataFrame(flat_routines)
         if existing_data.empty:
             existing_data = pd.DataFrame(columns=['Nombre_Rutina', 'Ejercicios', 'Fecha_Creacion'])
     except Exception:
@@ -189,7 +193,9 @@ def save_routine_template(nombre, ejercicios):
 
 def delete_routine_template(nombre):
     try:
-        existing_data = conn.read(worksheet="Rutinas", ttl=0).dropna(how="all")
+        mem_routines = load_routines()
+        flat_routines = [{"Nombre_Rutina": k, "Ejercicios": ", ".join(v)} for k, v in mem_routines.items()]
+        existing_data = pd.DataFrame(flat_routines)
     except Exception:
         return False
         
@@ -209,10 +215,10 @@ initialize_data()
 EXERCISE_CATALOG = st.session_state.exercises
 
 # --- Data Persistence ---
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def load_data():
     try:
-        df = conn.read(worksheet="Logs", ttl=600)
+        df = conn.read(worksheet="Logs", ttl=3600)
         df = df.dropna(how="all")
         if df.empty:
             return pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
@@ -244,7 +250,7 @@ def load_body_comp_data():
 
 def delete_workout(index):
     try:
-        existing_data = conn.read(worksheet="Logs", ttl=0).dropna(how="all")
+        existing_data = load_data()
         if index in existing_data.index:
             updated_data = existing_data.drop(index).reset_index(drop=True)
             if updated_data.empty:
@@ -380,7 +386,7 @@ with tab1:
                 with st.spinner("Sincronizando con Google Sheets..."):
                     try:
                         try:
-                            existing_data = conn.read(worksheet="Logs", ttl=0).dropna(how="all")
+                            existing_data = load_data()
                             if existing_data.empty:
                                 existing_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
                         except Exception:
@@ -412,8 +418,18 @@ with tab1:
                             if "UnsupportedOperationError" in str(type(inner_e).__name__) or "WorksheetNotFound" in str(type(inner_e).__name__):
                                 conn.create(worksheet="Logs", data=updated_data)
                             elif "429" in str(inner_e) or "Quota" in str(inner_e):
-                                time.sleep(2)
-                                raise Exception("Google Sheets está saturado (Error 429). Por favor, intenta de nuevo en 30 segundos.")
+                                # Local CSV Backup fallback
+                                backup_file = 'backup.csv'
+                                if os.path.exists(backup_file):
+                                    df_backup = pd.read_csv(backup_file)
+                                    df_combined = pd.concat([df_backup, new_data_df], ignore_index=True)
+                                else:
+                                    df_combined = new_data_df
+                                df_combined.to_csv(backup_file, index=False)
+                                
+                                st.session_state.current_workout_session = [] # Clear memory
+                                st.warning("⚠️ Google Sheets está saturado (Error 429). Sincronización fallida, datos respaldados localmente en backup.csv.")
+                                st.stop() # Skip success balloon
                             else:
                                 raise inner_e # Re-raise
                         
@@ -549,7 +565,7 @@ with tab1:
                 with st.spinner("Sincronizando con Google Sheets..."):
                     try:
                         try:
-                            existing_data = conn.read(worksheet="Logs", ttl=0).dropna(how="all")
+                            existing_data = load_data()
                             if existing_data.empty:
                                 existing_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
                         except Exception:
@@ -577,8 +593,24 @@ with tab1:
                             if "UnsupportedOperationError" in str(type(inner_e).__name__) or "WorksheetNotFound" in str(type(inner_e).__name__):
                                 conn.create(worksheet="Logs", data=updated_data)
                             elif "429" in str(inner_e) or "Quota" in str(inner_e):
-                                time.sleep(2)
-                                raise Exception("Google Sheets está saturado (Error 429). Por favor, intenta de nuevo en 30 segundos.")
+                                # Local CSV Backup fallback
+                                backup_file = 'backup.csv'
+                                if os.path.exists(backup_file):
+                                    df_backup = pd.read_csv(backup_file)
+                                    df_combined = pd.concat([df_backup, new_data_df], ignore_index=True)
+                                else:
+                                    df_combined = new_data_df
+                                df_combined.to_csv(backup_file, index=False)
+                                
+                                # Cleanup Session states
+                                for i in range(len(routine_exercises)):
+                                    key_to_del = f"sets_{rutina_seleccionada}_{i}"
+                                    if key_to_del in st.session_state:
+                                        del st.session_state[key_to_del]
+                                
+                                st.warning("⚠️ Google Sheets está saturado (Error 429). Sincronización fallida, datos respaldados localmente en backup.csv.")
+                                st.stop() # Skip success balloon
+
                             else:
                                 raise inner_e # Re-raise for the outer block to catch and display
 
@@ -617,68 +649,24 @@ with tab1:
     if manual_start:
         st.session_state.start_timer = True
         
-    # Render timer logic if triggered
     if st.session_state.start_timer:
-        timer_html = f"""
-        <div id="timer-container" style="
-            background-color: #1E1E1E; 
-            border: 2px solid #333; 
-            border-radius: 15px; 
-            padding: 20px; 
-            text-align: center;
-            margin-top: 10px;
-            transition: background-color 0.3s;
-        ">
-            <h1 id="timer-display" style="
-                font-size: 4rem; 
-                margin: 0; 
-                color: #FFFFFF;
-                font-family: monospace;
-            ">{rest_time}</h1>
-            <p id="timer-msg" style="color: #888; margin-top: 5px; font-size: 1.2rem;">Descansando...</p>
-        </div>
-
-        <script>
-            var timeLeft = {rest_time};
-            var timerDisplay = document.getElementById("timer-display");
-            var timerContainer = document.getElementById("timer-container");
-            var timerMsg = document.getElementById("timer-msg");
+        timer_placeholder = st.empty()
+        st.session_state.start_timer = False # Reset so it doesn't loop
+        for remaining in range(rest_time, 0, -1):
+            timer_placeholder.markdown(f"""
+            <div style="background-color: #1E1E1E; border: 2px solid #333; border-radius: 15px; padding: 20px; text-align: center; margin-top: 10px;">
+                <h1 style="font-size: 4rem; margin: 0; color: #FFFFFF; font-family: monospace;">{remaining}</h1>
+                <p style="color: #888; margin-top: 5px; font-size: 1.2rem;">Descansando...</p>
+            </div>
+            """, unsafe_allow_html=True)
+            time.sleep(1)
             
-            var countdown = setInterval(function() {{
-                timeLeft--;
-                timerDisplay.innerText = timeLeft;
-                
-                if (timeLeft <= 0) {{
-                    clearInterval(countdown);
-                    timerDisplay.innerText = "0";
-                    timerMsg.innerText = "¡Siguiente Serie!";
-                    timerMsg.style.color = "#FFFFFF";
-                    timerMsg.style.fontWeight = "bold";
-                    
-                    // Try to vibrate phone (Android mainly)
-                    if (navigator.vibrate) {{
-                        navigator.vibrate([500, 300, 500, 300, 500]);
-                    }}
-                    
-                    // Flashing effect
-                    var flashCount = 0;
-                    var flashInterval = setInterval(function() {{
-                        timerContainer.style.backgroundColor = (flashCount % 2 === 0) ? "#FF4B4B" : "#1E1E1E";
-                        flashCount++;
-                        if (flashCount > 10) {{
-                            clearInterval(flashInterval);
-                            timerContainer.style.backgroundColor = "#1E1E1E"; // reset
-                        }}
-                    }}, 300);
-                }}
-            }}, 1000);
-        </script>
-        """
-        import streamlit.components.v1 as components
-        components.html(timer_html, height=200)
-        
-        # Reset state so it doesn't auto-start on next UI interaction unless clicked again
-        st.session_state.start_timer = False
+        timer_placeholder.markdown(f"""
+        <div style="background-color: #FF4B4B; border: 2px solid #FF4B4B; border-radius: 15px; padding: 20px; text-align: center; margin-top: 10px;">
+            <h1 style="font-size: 4rem; margin: 0; color: #FFFFFF; font-family: monospace;">0</h1>
+            <p style="color: #FFFFFF; margin-top: 5px; font-size: 1.2rem; font-weight: bold;">¡Tiempo Terminado!</p>
+        </div>
+        """, unsafe_allow_html=True)
 
 with tab_hist:
     st.header("🕰️ Modo Explorador de Sesiones")
@@ -1243,4 +1231,5 @@ with tab6:
                         st.rerun()
     else:
         st.info("No tienes rutinas personalizadas creadas aún.")
+
 
