@@ -360,21 +360,40 @@ with tab1:
             st.dataframe(df_mem[['Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps']], hide_index=True)
             
             if st.button("💾 Finalizar y Sincronizar Libre con Google Sheets", type="primary"):
-                with st.spinner("Sincronizando..."):
+                with st.spinner("Sincronizando con Google Sheets..."):
                     try:
-                        existing_data = conn.read(worksheet="Logs", ttl=0).dropna(how="all")
-                        if existing_data.empty:
+                        try:
+                            existing_data = conn.read(worksheet="Logs", ttl=0).dropna(how="all")
+                            if existing_data.empty:
+                                existing_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
+                        except Exception:
                             existing_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
-                    except Exception:
-                        existing_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
-                    
-                    new_data_df = pd.DataFrame(st.session_state.current_workout_session)
-                    updated_data = pd.concat([existing_data, new_data_df], ignore_index=True).reset_index(drop=True)
-                    safe_gsheets_update("Logs", updated_data)
-                    
-                    st.session_state.current_workout_session = [] # Clear memory
-                    st.success("¡Datos libres sincronizados con Google Sheets!")
-                    st.rerun()
+                        
+                        # Double verify columns
+                        for col in ['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas']:
+                            if col not in existing_data.columns:
+                                existing_data[col] = None
+                                
+                        new_data_df = pd.DataFrame(st.session_state.current_workout_session)
+                        updated_data = pd.concat([existing_data, new_data_df], ignore_index=True).reset_index(drop=True)
+                        
+                        # Actual API execution wrapper
+                        try:
+                            conn.update(worksheet="Logs", data=updated_data)
+                        except Exception as inner_e:
+                            if "UnsupportedOperationError" in str(type(inner_e).__name__) or "WorksheetNotFound" in str(type(inner_e).__name__):
+                                conn.create(worksheet="Logs", data=updated_data)
+                            else:
+                                raise inner_e # Re-raise
+                        
+                        # Success Flow    
+                        st.session_state.current_workout_session = [] # Clear memory ONLY on success
+                        st.balloons()
+                        st.success("🎉 ¡Entrenamiento Libre Sincronizado Exitosamente! 🎉")
+                        st.session_state.start_timer = False
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error Técnico al Sincronizar: {str(e)}")
     else:
         routine_exercises = routines[rutina_seleccionada]
         routine_results = {}
@@ -458,56 +477,80 @@ with tab1:
                         value=int(set_dict["Reps"]), 
                         key=f"reps_{rutina_seleccionada}_{ex_name}_{s_idx}"
                     )
-                    
-            routine_results[ex_name] = st.session_state[state_key]
+            # We don't need a middleman dict anymore; we'll parse session_state directly on save
             
         st.write("") # spacing
         
         submitted_routine = st.button("💾 Finalizar y Sincronizar con Google Sheets", use_container_width=True, type="primary")
-        if submitted_routine:
+        
+        def prepare_workout_data():
             id_sesion = datetime.now().strftime("%Y%m%d%H%M%S")
-            all_sets = []
             fecha_ahora = datetime.now().strftime("%Y-%m-%d %H:%M")
-            for ex_name, list_sets in routine_results.items():
-                for set_data in list_sets:
-                    peso_val = set_data["Peso"]
-                    reps_val = set_data["Reps"]
-                    if peso_val > 0 or reps_val > 0:
-                        all_sets.append({
-                            'Fecha': fecha_ahora,
-                            'ID_Sesion': id_sesion,
-                            'Rutina': rutina_seleccionada,
-                            'Ejercicio': ex_name,
-                            'Set_No': set_data.get('Set', 1),
-                            'Peso': peso_val,
-                            'Unidad': set_data.get('Unidad', UNIDAD_GLOBAL),
-                            'Reps': reps_val,
-                            'Notas': set_data.get('Notas', '')
-                        })
+            all_sets = []
+            for i, ex_name in enumerate(routine_exercises):
+                state_key = f"sets_{rutina_seleccionada}_{i}"
+                if state_key in st.session_state:
+                    for set_data in st.session_state[state_key]:
+                        peso_val = float(set_data.get("Peso", 0.0))
+                        reps_val = int(set_data.get("Reps", 0))
+                        if peso_val > 0 or reps_val > 0:
+                            all_sets.append({
+                                'Fecha': fecha_ahora,
+                                'ID_Sesion': id_sesion,
+                                'Rutina': rutina_seleccionada,
+                                'Ejercicio': ex_name,
+                                'Set_No': int(set_data.get('Set', 1)),
+                                'Peso': peso_val,
+                                'Unidad': set_data.get('Unidad', UNIDAD_GLOBAL),
+                                'Reps': reps_val,
+                                'Notas': str(set_data.get('Notas', ''))
+                            })
+            return pd.DataFrame(all_sets)
             
-            if all_sets:
-                with st.spinner("Sincronizando..."):
+        if submitted_routine:
+            new_data_df = prepare_workout_data()
+            
+            if not new_data_df.empty:
+                with st.spinner("Sincronizando con Google Sheets..."):
                     try:
-                        existing_data = conn.read(worksheet="Logs", ttl=0).dropna(how="all")
-                        if existing_data.empty:
+                        try:
+                            existing_data = conn.read(worksheet="Logs", ttl=0).dropna(how="all")
+                            if existing_data.empty:
+                                existing_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
+                        except Exception:
                             existing_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
-                    except Exception:
-                        existing_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
+                            
+                        # Double verify columns
+                        for col in ['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas']:
+                            if col not in existing_data.columns:
+                                existing_data[col] = None
+                                
+                        updated_data = pd.concat([existing_data, new_data_df], ignore_index=True).reset_index(drop=True)
                         
-                    new_data_df = pd.DataFrame(all_sets)
-                    updated_data = pd.concat([existing_data, new_data_df], ignore_index=True).reset_index(drop=True)
-                    safe_gsheets_update("Logs", updated_data)
+                        # Actual API execution wrapper
+                        try:
+                            conn.update(worksheet="Logs", data=updated_data)
+                        except Exception as inner_e:
+                            if "UnsupportedOperationError" in str(type(inner_e).__name__) or "WorksheetNotFound" in str(type(inner_e).__name__):
+                                conn.create(worksheet="Logs", data=updated_data)
+                            else:
+                                raise inner_e # Re-raise for the outer block to catch and display
 
-                    st.toast(f"✅ Rutina '{rutina_seleccionada}' sincronizada con éxito.")
-                    st.session_state.start_timer = True
-                    
-                    # Cleanup session state for this routine
-                    for key in list(st.session_state.keys()):
-                        if key.startswith(f"sets_{rutina_seleccionada}_"):
-                            del st.session_state[key]
-                    st.rerun()
+                        # Success Flow
+                        st.balloons()
+                        st.success("🎉 ¡Entrenamiento Sincronizado Exitosamente! 🎉")
+                        
+                        # Cleanup Session states ONLY on success
+                        for i in range(len(routine_exercises)):
+                            key_to_del = f"sets_{rutina_seleccionada}_{i}"
+                            if key_to_del in st.session_state:
+                                del st.session_state[key_to_del]
+                                
+                        st.session_state.start_timer = False
+                    except Exception as e:
+                        st.error(f"❌ Error Técnico al Sincronizar: {str(e)}")
             else:
-                st.warning("⚠️ No se registraron sets (todos tenían 0 peso y 0 reps).")
+                st.warning("⚠️ No se registraron sets (todos tenían 0 peso y 0 reps). No hay nada que guardar.")
                 
     # --- Rest Timer Section ---
     st.divider()
@@ -1149,3 +1192,4 @@ with tab6:
                         st.rerun()
     else:
         st.info("No tienes rutinas personalizadas creadas aún.")
+
