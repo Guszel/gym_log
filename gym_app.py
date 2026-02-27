@@ -201,7 +201,7 @@ def load_data():
         df = conn.read(worksheet="Logs", ttl=0)
         df = df.dropna(how="all")
         if df.empty:
-            return pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
+            return pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notes'])
             
         # Legacy mappings
         if 'Rutina' not in df.columns and 'Rutina_Nombre' in df.columns:
@@ -216,9 +216,11 @@ def load_data():
             df['ID_Sesion'] = 'N/A'
         if 'Unidad' not in df.columns:
             df['Unidad'] = 'Kg'
+        if 'Notas' in df.columns:
+            df = df.rename(columns={'Notas': 'Notes'})
         return df
     except Exception:
-        return pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
+        return pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notes'])
 
 def load_body_comp_data():
     if os.path.exists(BODY_COMP_CSV_FILE):
@@ -232,7 +234,7 @@ def delete_workout(index):
         if index in existing_data.index:
             updated_data = existing_data.drop(index).reset_index(drop=True)
             if updated_data.empty:
-                updated_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
+                updated_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notes'])
             safe_gsheets_update("Logs", updated_data)
             return True
     except Exception:
@@ -347,7 +349,7 @@ with tab1:
                     "Peso": peso,
                     "Unidad": unidad_libre,
                     "Reps": reps,
-                    "Notas": notas
+                    "Notes": notas
                 })
                 st.success(f"✅ Añadido a memoria: {ejercicio} - {peso}{unidad_libre} x {reps}")
                 st.session_state.start_timer = True # Trigger timer on save
@@ -365,16 +367,28 @@ with tab1:
                         try:
                             existing_data = conn.read(worksheet="Logs", ttl=0).dropna(how="all")
                             if existing_data.empty:
-                                existing_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
+                                existing_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notes'])
                         except Exception:
-                            existing_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
+                            existing_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notes'])
                         
-                        # Double verify columns
-                        for col in ['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas']:
+                        # Fix KeyError: Enforce strict columns
+                        columnas_estrictas = ['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notes']
+                        for col in columnas_estrictas:
                             if col not in existing_data.columns:
-                                existing_data[col] = None
+                                existing_data[col] = ''
                                 
                         new_data_df = pd.DataFrame(st.session_state.current_workout_session)
+                        
+                        # Mapeo estricto del envío
+                        # Any missing keys get filled with empty string to conform seamlessly
+                        for col in columnas_estrictas:
+                            if col not in new_data_df.columns:
+                                new_data_df[col] = ''
+                                
+                        new_data_df = new_data_df[columnas_estrictas] # Reorder to lock schema
+                        
+                        st.write("Debug: Columnas a enviar:", new_data_df.columns.tolist()) # Temporary Logging
+                        
                         updated_data = pd.concat([existing_data, new_data_df], ignore_index=True).reset_index(drop=True)
                         
                         # Actual API execution wrapper
@@ -503,7 +517,7 @@ with tab1:
                                 'Peso': peso_val,
                                 'Unidad': set_data.get('Unidad', UNIDAD_GLOBAL),
                                 'Reps': reps_val,
-                                'Notas': str(set_data.get('Notas', ''))
+                                'Notes': str(set_data.get('Notas', ''))
                             })
             return pd.DataFrame(all_sets)
             
@@ -516,15 +530,23 @@ with tab1:
                         try:
                             existing_data = conn.read(worksheet="Logs", ttl=0).dropna(how="all")
                             if existing_data.empty:
-                                existing_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
+                                existing_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notes'])
                         except Exception:
-                            existing_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
+                            existing_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notes'])
                             
-                        # Double verify columns
-                        for col in ['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas']:
+                        columnas_estrictas = ['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notes']
+                        for col in columnas_estrictas:
                             if col not in existing_data.columns:
-                                existing_data[col] = None
+                                existing_data[col] = ''
                                 
+                        for col in columnas_estrictas:
+                            if col not in new_data_df.columns:
+                                new_data_df[col] = ''
+                                
+                        new_data_df = new_data_df[columnas_estrictas]
+                        
+                        st.write("Debug: Columnas a enviar:", new_data_df.columns.tolist())
+                        
                         updated_data = pd.concat([existing_data, new_data_df], ignore_index=True).reset_index(drop=True)
                         
                         # Actual API execution wrapper
@@ -1192,4 +1214,3 @@ with tab6:
                         st.rerun()
     else:
         st.info("No tienes rutinas personalizadas creadas aún.")
-
