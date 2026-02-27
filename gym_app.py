@@ -104,6 +104,12 @@ DEFAULT_EXERCISES = {
     ]
 }
 
+def initialize_data():
+    if "routines" not in st.session_state:
+        st.session_state.routines = load_routines()
+    if "exercises" not in st.session_state:
+        st.session_state.exercises = load_exercises()
+        
 def load_routines():
     try:
         df = conn.read(worksheet="Rutinas", ttl=0)
@@ -131,16 +137,6 @@ def load_exercises():
     except Exception:
         pass
         
-    # Inicialización por defecto en GSheets
-    records = []
-    for grupo, ejercicios in DEFAULT_EXERCISES.items():
-        for ej in ejercicios:
-            records.append({"Nombre del Ejercicio": ej, "Grupo Muscular": grupo})
-    df_default = pd.DataFrame(records)
-    try:
-        safe_gsheets_update("Ejercicios", df_default)
-    except Exception:
-        pass
     return {k: sorted(v) for k, v in DEFAULT_EXERCISES.items()}
 
 def save_new_exercise(nombre, grupo):
@@ -153,6 +149,8 @@ def save_new_exercise(nombre, grupo):
         df = df_new
     df = df.drop_duplicates(subset=["Nombre del Ejercicio"])
     safe_gsheets_update("Ejercicios", df)
+    # Update memory
+    st.session_state.exercises = load_exercises()
 
 def save_routine_template(nombre, ejercicios):
     try:
@@ -174,6 +172,8 @@ def save_routine_template(nombre, ejercicios):
     
     updated_data = pd.concat([existing_data, new_data], ignore_index=True).reset_index(drop=True)
     safe_gsheets_update("Rutinas", updated_data)
+    # Update memory
+    st.session_state.routines = load_routines()
 
 def delete_routine_template(nombre):
     try:
@@ -186,10 +186,14 @@ def delete_routine_template(nombre):
         if updated_data.empty:
             updated_data = pd.DataFrame(columns=['Nombre_Rutina', 'Ejercicios', 'Fecha_Creacion'])
         safe_gsheets_update("Rutinas", updated_data)
+        # Update memory
+        st.session_state.routines = load_routines()
         return True
     return False
 
-EXERCISE_CATALOG = load_exercises()
+# Initialize Memory Data Objects
+initialize_data()
+EXERCISE_CATALOG = st.session_state.exercises
 
 # --- Data Persistence ---
 def load_data():
@@ -235,58 +239,7 @@ def delete_workout(index):
         pass
     return False
 
-def save_workout(ejercicio, peso, reps, notas, unidad_input, rutina_nombre="Libre", id_sesion="N/A", set_no=1):
-    try:
-        existing_data = conn.read(worksheet="Logs", ttl=0).dropna(how="all")
-        if existing_data.empty:
-            existing_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
-    except Exception:
-        existing_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
-        
-    new_entry = {
-        "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "ID_Sesion": id_sesion,
-        "Rutina": rutina_nombre,
-        "Ejercicio": ejercicio,
-        "Set_No": set_no,
-        "Peso": peso,
-        "Unidad": unidad_input,
-        "Reps": reps,
-        "Notas": notas
-    }
-    new_data_df = pd.DataFrame([new_entry])
-    updated_data = pd.concat([existing_data, new_data_df], ignore_index=True).reset_index(drop=True)
-    safe_gsheets_update("Logs", updated_data)
-    st.success("Datos sincronizados con Google Sheets")
-    return True
-
-def save_routine(rutina_nombre, id_sesion, df_sets):
-    try:
-        existing_data = conn.read(worksheet="Logs", ttl=0).dropna(how="all")
-        if existing_data.empty:
-            existing_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
-    except Exception:
-        existing_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
-        
-    records = []
-    fecha = datetime.now().strftime("%Y-%m-%d %H:%M")
-    for s in df_sets:
-        records.append({
-            "Fecha": fecha,
-            "ID_Sesion": id_sesion,
-            "Rutina": rutina_nombre,
-            "Ejercicio": s['Ejercicio'],
-            "Set_No": s.get('Set', 1),
-            "Peso": s['Peso'],
-            "Unidad": s.get('Unidad', UNIDAD_GLOBAL),
-            "Reps": s['Reps'],
-            "Notas": s.get('Notas', '')
-        })
-    new_data_df = pd.DataFrame(records)
-    updated_data = pd.concat([existing_data, new_data_df], ignore_index=True).reset_index(drop=True)
-    safe_gsheets_update("Logs", updated_data)
-    st.success("Datos sincronizados con Google Sheets")
-    return True
+# Function save_workout and save_routine deprecated in favor of batch memory sync
 
 def save_body_comp(peso, grasa_pct, ffmi):
     df = load_body_comp_data()
@@ -348,9 +301,13 @@ with tab1:
     # 2. Workout Entry Form
     st.subheader("Entrenamiento Activo")
 
-    # Exercise Catalog for "Libre" mode uses the global EXERCISE_CATALOG
+    # Initialize active session tracking array
+    if "current_workout_session" not in st.session_state:
+        st.session_state.current_workout_session = []
 
-    routines = load_routines()
+    # Exercise Catalog for "Libre" mode uses the global EXERCISE_CATALOG
+    
+    routines = st.session_state.routines
     rutina_opciones = [r for r in routines.keys() if r != "Libre (Histórico)"] + ["Libre"]
     
     if "rutina_activa_sel" not in st.session_state:
@@ -377,12 +334,47 @@ with tab1:
                 
             notas = st.text_area("Notas (RPE, sensaciones...)", height=80)
             
-            submitted = st.form_submit_button("LOG SET 📝", use_container_width=True)
+            submitted = st.form_submit_button("LOG SET (Memoria Local) 📝", use_container_width=True)
             
             if submitted:
-                if save_workout(ejercicio, peso, reps, notas, unidad_libre):
-                    st.success(f"✅ Guardado: {ejercicio} - {peso}{unidad_libre} x {reps}")
-                    st.session_state.start_timer = True # Trigger timer on save
+                # Add to memory
+                st.session_state.current_workout_session.append({
+                    "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "ID_Sesion": "Libre_Session",
+                    "Rutina": "Libre",
+                    "Ejercicio": ejercicio,
+                    "Set_No": len([s for s in st.session_state.current_workout_session if s['Ejercicio'] == ejercicio]) + 1,
+                    "Peso": peso,
+                    "Unidad": unidad_libre,
+                    "Reps": reps,
+                    "Notas": notas
+                })
+                st.success(f"✅ Añadido a memoria: {ejercicio} - {peso}{unidad_libre} x {reps}")
+                st.session_state.start_timer = True # Trigger timer on save
+                
+        # Show pending free-form logs
+        if st.session_state.current_workout_session:
+            st.write("---")
+            st.write("**Sets en memoria (Pendientes de Sincronizar):**")
+            df_mem = pd.DataFrame(st.session_state.current_workout_session)
+            st.dataframe(df_mem[['Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps']], hide_index=True)
+            
+            if st.button("💾 Finalizar y Sincronizar Libre con Google Sheets", type="primary"):
+                with st.spinner("Sincronizando..."):
+                    try:
+                        existing_data = conn.read(worksheet="Logs", ttl=0).dropna(how="all")
+                        if existing_data.empty:
+                            existing_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
+                    except Exception:
+                        existing_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
+                    
+                    new_data_df = pd.DataFrame(st.session_state.current_workout_session)
+                    updated_data = pd.concat([existing_data, new_data_df], ignore_index=True).reset_index(drop=True)
+                    safe_gsheets_update("Logs", updated_data)
+                    
+                    st.session_state.current_workout_session = [] # Clear memory
+                    st.success("¡Datos libres sincronizados con Google Sheets!")
+                    st.rerun()
     else:
         routine_exercises = routines[rutina_seleccionada]
         routine_results = {}
@@ -471,18 +463,22 @@ with tab1:
             
         st.write("") # spacing
         
-        submitted_routine = st.button("FINALIZAR Y GUARDAR RUTINA 💾", use_container_width=True, type="primary")
+        submitted_routine = st.button("💾 Finalizar y Sincronizar con Google Sheets", use_container_width=True, type="primary")
         if submitted_routine:
             id_sesion = datetime.now().strftime("%Y%m%d%H%M%S")
             all_sets = []
+            fecha_ahora = datetime.now().strftime("%Y-%m-%d %H:%M")
             for ex_name, list_sets in routine_results.items():
                 for set_data in list_sets:
                     peso_val = set_data["Peso"]
                     reps_val = set_data["Reps"]
                     if peso_val > 0 or reps_val > 0:
                         all_sets.append({
+                            'Fecha': fecha_ahora,
+                            'ID_Sesion': id_sesion,
+                            'Rutina': rutina_seleccionada,
                             'Ejercicio': ex_name,
-                            'Set': set_data.get('Set', 1),
+                            'Set_No': set_data.get('Set', 1),
                             'Peso': peso_val,
                             'Unidad': set_data.get('Unidad', UNIDAD_GLOBAL),
                             'Reps': reps_val,
@@ -490,15 +486,26 @@ with tab1:
                         })
             
             if all_sets:
-                save_routine(rutina_seleccionada, id_sesion, all_sets)
-                st.toast(f"✅ Rutina '{rutina_seleccionada}' guardada con éxito.")
-                st.session_state.start_timer = True
-                
-                # Cleanup session state for this routine
-                for key in list(st.session_state.keys()):
-                    if key.startswith(f"sets_{rutina_seleccionada}_"):
-                        del st.session_state[key]
-                st.rerun()
+                with st.spinner("Sincronizando..."):
+                    try:
+                        existing_data = conn.read(worksheet="Logs", ttl=0).dropna(how="all")
+                        if existing_data.empty:
+                            existing_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
+                    except Exception:
+                        existing_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
+                        
+                    new_data_df = pd.DataFrame(all_sets)
+                    updated_data = pd.concat([existing_data, new_data_df], ignore_index=True).reset_index(drop=True)
+                    safe_gsheets_update("Logs", updated_data)
+
+                    st.toast(f"✅ Rutina '{rutina_seleccionada}' sincronizada con éxito.")
+                    st.session_state.start_timer = True
+                    
+                    # Cleanup session state for this routine
+                    for key in list(st.session_state.keys()):
+                        if key.startswith(f"sets_{rutina_seleccionada}_"):
+                            del st.session_state[key]
+                    st.rerun()
             else:
                 st.warning("⚠️ No se registraron sets (todos tenían 0 peso y 0 reps).")
                 
