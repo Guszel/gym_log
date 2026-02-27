@@ -353,7 +353,10 @@ with tab1:
     routines = load_routines()
     rutina_opciones = [r for r in routines.keys() if r != "Libre (Histórico)"] + ["Libre"]
     
-    rutina_seleccionada = st.selectbox("Rutina Activa", rutina_opciones, key="current_muscle_group")
+    if "rutina_activa_sel" not in st.session_state:
+        st.session_state.rutina_activa_sel = rutina_opciones[0] if rutina_opciones else "Libre"
+        
+    rutina_seleccionada = st.selectbox("Rutina Activa", rutina_opciones, key="rutina_activa_sel")
 
     # Initialize timer state
     if "start_timer" not in st.session_state:
@@ -443,26 +446,25 @@ with tab1:
                 with c_set:
                     st.markdown(f"<div style='margin-top:35px;'>**S{s_idx+1}**</div>", unsafe_allow_html=True)
                 with c_peso:
-                    # Dynamically read and update the session state variable
                     st.session_state[state_key][s_idx]["Peso"] = st.number_input(
                         "Peso", 
                         min_value=0.0, step=2.5, format="%.1f", 
                         value=float(set_dict["Peso"]), 
-                        key=f"peso_{rutina_seleccionada}_{i}_{s_idx}"
+                        key=f"peso_{rutina_seleccionada}_{ex_name}_{s_idx}"
                     )
                 with c_unidad:
                     st.session_state[state_key][s_idx]["Unidad"] = st.selectbox(
                         "Unidad", 
                         ["Kg", "Lbs"], 
                         index=0 if set_dict.get("Unidad", UNIDAD_GLOBAL) == "Kg" else 1,
-                        key=f"uni_{rutina_seleccionada}_{i}_{s_idx}"
+                        key=f"uni_{rutina_seleccionada}_{ex_name}_{s_idx}"
                     )
                 with c_reps:
                     st.session_state[state_key][s_idx]["Reps"] = st.number_input(
                         "Reps", 
                         min_value=0, step=1, 
                         value=int(set_dict["Reps"]), 
-                        key=f"reps_{rutina_seleccionada}_{i}_{s_idx}"
+                        key=f"reps_{rutina_seleccionada}_{ex_name}_{s_idx}"
                     )
                     
             routine_results[ex_name] = st.session_state[state_key]
