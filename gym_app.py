@@ -146,6 +146,9 @@ def invalidate_caches():
     load_routines.clear()
     load_exercises.clear()
     
+def invalidate_logs_cache():
+    load_data.clear()
+    
 def save_new_exercise(nombre, grupo):
     df_new = pd.DataFrame([{"Nombre del Ejercicio": nombre, "Grupo Muscular": grupo}])
     try:
@@ -206,9 +209,10 @@ initialize_data()
 EXERCISE_CATALOG = st.session_state.exercises
 
 # --- Data Persistence ---
+@st.cache_data(ttl=600, show_spinner=False)
 def load_data():
     try:
-        df = conn.read(worksheet="Logs", ttl=0)
+        df = conn.read(worksheet="Logs", ttl=600)
         df = df.dropna(how="all")
         if df.empty:
             return pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
@@ -246,6 +250,7 @@ def delete_workout(index):
             if updated_data.empty:
                 updated_data = pd.DataFrame(columns=['Fecha', 'ID_Sesion', 'Rutina', 'Ejercicio', 'Set_No', 'Peso', 'Unidad', 'Reps', 'Notas'])
             safe_gsheets_update("Logs", updated_data)
+            invalidate_logs_cache()
             return True
     except Exception:
         pass
@@ -274,7 +279,7 @@ with st.sidebar:
     st.write("Exporta un respaldo de tus datos.")
     
     try:
-        df_logs = conn.read(worksheet="Logs", ttl=0)
+        df_logs = load_data()
         if not df_logs.empty:
             csv_logs = df_logs.to_csv(index=False).encode('utf-8')
             st.download_button(
@@ -414,6 +419,7 @@ with tab1:
                         
                         # Success Flow    
                         st.session_state.current_workout_session = [] # Clear memory ONLY on success
+                        invalidate_logs_cache()
                         st.balloons()
                         st.success("🎉 ¡Entrenamiento Libre Sincronizado Exitosamente! 🎉")
                         st.session_state.start_timer = False
@@ -577,6 +583,7 @@ with tab1:
                                 raise inner_e # Re-raise for the outer block to catch and display
 
                         # Success Flow
+                        invalidate_logs_cache()
                         st.balloons()
                         st.success("🎉 ¡Entrenamiento Sincronizado Exitosamente! 🎉")
                         
@@ -1169,7 +1176,7 @@ with tab5:
     st.subheader("Catálogo Actual")
     
     try:
-        df_ej = conn.read(worksheet="Ejercicios", ttl=0)
+        df_ej = conn.read(worksheet="Ejercicios", ttl=600)
         df_ej = df_ej.dropna(how="all")
         if not df_ej.empty and 'Grupo Muscular' in df_ej.columns and 'Nombre del Ejercicio' in df_ej.columns:
             df_ej = df_ej.sort_values(by=["Grupo Muscular", "Nombre del Ejercicio"])
@@ -1186,7 +1193,8 @@ with tab5:
             if st.button("Guardar Cambios 💾", type="primary"):
                 edited_ej = edited_ej.dropna(subset=['Nombre del Ejercicio'])
                 safe_gsheets_update("Ejercicios", edited_ej)
-                st.success("Diccionario actualizado exitosamente.")
+                invalidate_caches()
+                st.success("¡Catálogo actualizado en Google Sheets!")
                 st.rerun()
     except Exception:
         st.info("Configura tu base de datos para ver el catálogo interactivo.")
@@ -1235,3 +1243,4 @@ with tab6:
                         st.rerun()
     else:
         st.info("No tienes rutinas personalizadas creadas aún.")
+
